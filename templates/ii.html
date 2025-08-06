@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Lembar Disposisi</title>
+    <style>
+        body {
+            font-family: "Times New Roman", serif;
+            font-size: 12px;
+            margin: 20px;
+            line-height: 1.2;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .logo {
+            float: left;
+            width: 80px;
+            height: 80px;
+            border: 2px solid #000;
+            border-radius: 50%;
+            margin-right: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 8px;
+            text-align: center;
+        }
+
+        .header-text {
+            margin-left: 100px;
+            padding-top: 10px;
+        }
+
+        .header-text h2 {
+            font-size: 16px;
+            font-weight: bold;
+            margin: 0;
+            letter-spacing: 1px;
+        }
+
+        .header-text .subtitle {
+            font-size: 11px;
+            font-weight: bold;
+            margin: 2px 0;
+        }
+
+        .header-text .address {
+            font-size: 10px;
+            margin: 5px 0;
+        }
+
+        .title-box {
+            border: 2px solid #000;
+            text-align: center;
+            padding: 8px;
+            margin: 20px 0;
+            background-color: #f5f5f5;
+        }
+
+        .title-box h3 {
+            font-size: 14px;
+            font-weight: bold;
+            margin: 0;
+            letter-spacing: 2px;
+        }
+
+        .main-table {
+            width: 100%;
+            border-collapse: collapse;
+            border: 1px solid #000;
+            margin-bottom: 0;
+        }
+
+        .main-table td {
+            border: 1px solid #000;
+            padding: 8px;
+            vertical-align: top;
+        }
+
+        .left-column {
+            width: 48%;
+        }
+
+        .right-column {
+            width: 52%;
+        }
+
+        .field-label {
+            font-weight: normal;
+            margin-bottom: 3px;
+        }
+
+        .field-line {
+            border-bottom: 1px dotted #000;
+            min-height: 15px;
+            margin-bottom: 8px;
+        }
+
+        .checkbox-row {
+            margin: 5px 0;
+        }
+
+        .checkbox {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 1px solid #000;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        .bottom-section {
+            border: 1px solid #000;
+            border-top: none;
+        }
+
+        .perihal-row {
+            border-bottom: 1px solid #000;
+            padding: 8px;
+        }
+
+        .content-row {
+            display: flex;
+            border-bottom: 1px solid #000;
+        }
+
+        .left-content {
+            width: 48%;
+            border-right: 1px solid #000;
+            padding: 8px;
+        }
+
+        .right-content {
+            width: 52%;
+            padding: 8px;
+        }
+
+        .section-title {
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .checkbox-list {
+            margin-left: 15px;
+        }
+
+        .checkbox-list div {
+            margin: 3px 0;
+        }
+
+        .catatan-section {
+            border-top: 1px solid #000;
+            padding: 8px;
+            min-height: 60px;
+        }
+
+        .signature-section {
+            text-align: right;
+            padding: 8px;
+            border-top: 1px solid #000;
+        }
+
+        .signature-line {
+            margin-top: 40px;
+            text-decoration: underline;
+        }
+
+        .clearfix::after {
+            content: "";
+            display: table;
+            clear: both;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="header clearfix">
+        <div class="logo">
+            <div>
+                KOTA<br>
+                TASIKMALAYA
+            </div>
+        </div>
+        <div class="header-text">
+            <h2>PEMERINTAH KOTA TASIKMALAYA</h2>
+            <div class="subtitle">BADAN PERENCANAAN PEMBANGUNAN PENELITIAN</div>
+            <div class="subtitle">DAN PENGEMBANGAN DAERAH</div>
+            <div class="address">Jalan Letnan Harun Nomor 1 Telepon (0265) 334018 Kota Tasikmalaya</div>
+        </div>
+    </div>
+
+    <div class="title-box">
+        <h3>LEMBAR DISPOSISI</h3>
+    </div>
+
+    <table class="main-table">
+        <tr>
+            <td class="left-column">
+                <div class="field-label">Surat dari :</div>
+                <div class="field-line">{{asal_instansi}}</div>
+                <br>
+                <div class="field-label">No. Surat :</div>
+                <div class="field-line">{{nomor_surat}}</div>
+                <br>
+                <div class="field-label">Tgl. Surat :</div>
+                <div class="field-line">{{created_at}}</div>
+            </td>
+            <td class="right-column">
+                <div class="field-label">Diterima Tgl :</div>
+                <div class="field-line">{{processed_at}}</div>
+                <br>
+                <div class="field-label">No. Agenda :</div>
+                <div class="field-line"></div>
+                <br>
+                <div class="field-label">Sifat :</div>
+                <div class="checkbox-row">
+                    <span class="checkbox">{{#if (eq sifat "Sangat Segera")}}✔{{/if}}</span>Sangat segera
+                    <span class="checkbox">{{#if (eq sifat "Segera")}}✔{{/if}}</span>Segera
+                    <span class="checkbox">{{#if (eq sifat "Rahasia")}}✔{{/if}}</span>Rahasia
+                </div>
+            </td>
+        </tr>
+    </table>
+
+    <div class="bottom-section">
+        <div class="perihal-row">
+            <div class="field-label">Perihal :</div>
+            <div class="field-line">{{perihal}}</div>
+        </div>
+
+        <div class="content-row">
+            <div class="left-content">
+                <div class="section-title">DITERUSKAN KEPADA</div>
+                <div class="section-title">Yth.</div>
+                <div class="checkbox-list">
+                    <div><span class="checkbox">{{#if (eq disposisi_kepada "Sekretaris")}}✔{{/if}}</span><strong>Sekretaris</strong></div>
+                    <div style="margin-left: 20px;"><span class="checkbox">{{#if (eq disposisi_kepada "Kasubag Umum dan Kepegawaian")}}✔{{/if}}</span>Kasubag Umum dan Kepegawaian</div>
+                    <div style="margin-left: 20px;"><span class="checkbox">{{#if (eq disposisi_kepada "Kasubag Keuangan")}}✔{{/if}}</span>Kasubag Keuangan</div>
+                    <br>
+                    <div><span class="checkbox">{{#if (eq disposisi_kepada "Kabid Pendanaan, Pengendalian, dan Evaluasi")}}✔{{/if}}</span><strong>Kabid Pendanaan, Pengendalian,</strong></div>
+                    <div style="margin-left: 20px;"><strong>dan Evaluasi</strong></div>
+                    <br>
+                    <div><span class="checkbox">{{#if (eq disposisi_kepada "Kabid Pemerintahan dan Pembangunan Manusia")}}✔{{/if}}</span><strong>Kabid Pemerintahan dan Pembangunan</strong></div>
+                    <div style="margin-left: 20px;"><strong>Manusia</strong></div>
+                    <br>
+                    <div><span class="checkbox">{{#if (eq disposisi_kepada "Kabid Perekonomian, Infrastruktur, dan Kewilayahan")}}✔{{/if}}</span><strong>Kabid Perekonomian, Infrastruktur,</strong></div>
+                    <div style="margin-left: 20px;"><strong>dan Kewilayahan</strong></div>
+                    <br>
+                    <div><span class="checkbox">{{#if (eq disposisi_kepada "Kabid Penelitian dan Pengembangan")}}✔{{/if}}</span><strong>Kabid Penelitian dan Pengembangan</strong></div>
+                </div>
+            </div>
+            <div class="right-content">
+                <div class="section-title">Dengan hormat harap :</div>
+                <div class="checkbox-list">
+                    <div><span class="checkbox"></span>Tanggapan dan Saran</div>
+                    <div><span class="checkbox"></span>Wakili / Hadir / Terima</div>
+                    <div><span class="checkbox"></span>Mendampingi Saya</div>
+                    <div><span class="checkbox"></span>Untuk Ditindaklanjuti</div>
+                    <div><span class="checkbox"></span>Pelajari / Telaa'h / Sarannya</div>
+                    <div><span class="checkbox"></span>Untuk Dikaji Sesuai dengan Ketentuan</div>
+                    <div><span class="checkbox"></span>Untuk Dibantu / Dipertimbangkan /</div>
+                    <div style="margin-left: 20px;">Sesuai dengan Ketentuan</div>
+                    <div><span class="checkbox"></span>Selesaikan / Proses Sesuai Ketentuan</div>
+                    <div><span class="checkbox"></span>Monitor Realisasinya / Perkembangannya</div>
+                    <div><span class="checkbox"></span>Siapkan Pointers / Sambutan / Bahan</div>
+                    <div><span class="checkbox"></span>Menghadap / Informasinya</div>
+                    <div><span class="checkbox"></span>Membaca / File / Referensi</div>
+                    <div><span class="checkbox"></span>Agendakan / Jadwalkan / Koordinasikan</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="catatan-section">
+            <div class="section-title">Catatan :</div>
+            <div style="min-height: 40px;">{{catatan}}</div>
+        </div>
+
+        <div class="signature-section">
+            <div>Kepala Bappelitbangda</div>
+            <div>Kota Tasikmalaya</div>
+            <div class="signature-line">
+                ( .................................................. )
+            </div>
+        </div>
+    </div>
+
+</body>
+
+</html>
