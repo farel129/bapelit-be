@@ -1781,7 +1781,7 @@ const uploadFeedbackToSupabaseStorage = async (file, folder = 'feedback') => {
   const fileExt = path.extname(file.originalname);
   const fileName = `${folder}/${Date.now()}-${Math.round(Math.random() * 1E9)}${fileExt}`;
   
-  const { data, error } = await supabase.storage
+  const { data, error } = await supabaseAdmin.storage
     .from('feedback-photos') // ✅ Bucket khusus feedback
     .upload(fileName, file.buffer, {
       contentType: file.mimetype,
