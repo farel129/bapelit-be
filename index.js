@@ -2420,7 +2420,7 @@ app.put('/api/feedback/:id/edit', authenticateToken, uploadFeedback.array('new_p
     const { id } = req.params;
     const { feedback_notes, remove_photo_ids } = req.body;
 
-    // Cek apakah feedback ada dan milik user
+    // 1. Cek apakah feedback ada dan milik user
     const { data: existingFeedback, error: fetchError } = await supabase
       .from('surat_feedback')
       .select('*')
@@ -2429,26 +2429,20 @@ app.put('/api/feedback/:id/edit', authenticateToken, uploadFeedback.array('new_p
       .single();
 
     if (fetchError || !existingFeedback) {
-      if (req.files?.length > 0) {
-        req.files.forEach(file => fs.unlinkSync(file.path));
-      }
       return res.status(404).json({ error: 'Feedback tidak ditemukan atau bukan milik Anda' });
     }
 
-    // Cek apakah masih dalam waktu edit (misalnya 1 jam setelah submit)
+    // 2. Cek waktu edit (max 1 jam)
     const timeDiff = new Date() - new Date(existingFeedback.created_at);
-    const oneHour = 60 * 60 * 1000; // 1 jam dalam milliseconds
+    const oneHour = 60 * 60 * 1000; // 1 jam
 
     if (timeDiff > oneHour) {
-      if (req.files?.length > 0) {
-        req.files.forEach(file => fs.unlinkSync(file.path));
-      }
       return res.status(400).json({ 
         error: 'Waktu edit feedback sudah habis (maksimal 1 jam setelah submit)' 
       });
     }
 
-    // Update feedback notes
+    // 3. Update feedback notes
     const { error: updateError } = await supabase
       .from('surat_feedback')
       .update({
@@ -2458,64 +2452,89 @@ app.put('/api/feedback/:id/edit', authenticateToken, uploadFeedback.array('new_p
       .eq('id', id);
 
     if (updateError) {
-      if (req.files?.length > 0) {
-        req.files.forEach(file => fs.unlinkSync(file.path));
-      }
       return res.status(400).json({ error: updateError.message });
     }
 
-    // Handle remove photos
+    // 4. Hapus foto lama (jika diminta)
     if (remove_photo_ids) {
       const photoIdsToRemove = Array.isArray(remove_photo_ids) 
         ? remove_photo_ids 
         : [remove_photo_ids];
 
-      // Ambil path foto yang akan dihapus
-      const { data: photosToRemove } = await supabase
+      // Ambil data foto (termasuk storage_path) dari Supabase
+      const { data: photosToRemove, error: fetchPhotoError } = await supabase
         .from('feedback_photos')
-        .select('foto_path')
+        .select('storage_path')
         .eq('feedback_id', id)
         .in('id', photoIdsToRemove);
 
+      if (fetchPhotoError) {
+        return res.status(400).json({ error: 'Gagal ambil data foto: ' + fetchPhotoError.message });
+      }
+
       // Hapus dari database
-      await supabase
+      const { error: deleteError } = await supabase
         .from('feedback_photos')
         .delete()
         .eq('feedback_id', id)
         .in('id', photoIdsToRemove);
 
-      // Hapus file fisik
-      photosToRemove?.forEach(photo => {
-        if (photo.foto_path && fs.existsSync(photo.foto_path)) {
-          fs.unlinkSync(photo.foto_path);
-        }
-      });
-    }
-
-    // Handle new photos
-    let newPhotoCount = 0;
-    if (req.files?.length > 0) {
-      const photoData = req.files.map(file => ({
-        feedback_id: id,
-        foto_path: file.path,
-        foto_filename: file.filename,
-        foto_original_name: file.originalname,
-        file_size: file.size,
-        created_at: new Date().toISOString()
-      }));
-
-      const { error: photoError } = await supabase
-        .from('feedback_photos')
-        .insert(photoData);
-
-      if (photoError) {
-        req.files.forEach(file => fs.unlinkSync(file.path));
-        return res.status(400).json({ error: 'Gagal menambah foto baru: ' + photoError.message });
+      if (deleteError) {
+        return res.status(400).json({ error: 'Gagal hapus foto dari DB: ' + deleteError.message });
       }
 
-      newPhotoCount = req.files.length;
+      // Hapus dari Supabase Storage
+      if (photosToRemove && photosToRemove.length > 0) {
+        const pathsToDelete = photosToRemove.map(p => p.storage_path);
+        const { error: storageError } = await supabase.storage
+          .from('feedback-photos')
+          .remove(pathsToDelete);
+
+        if (storageError) {
+          console.error('Gagal hapus dari Supabase Storage:', storageError);
+          // Tidak throw error, karena DB sudah bersih
+        }
+      }
     }
 
+    // 5. Upload foto baru
+    let newPhotoCount = 0;
+    if (req.files && req.files.length > 0) {
+      try {
+        const uploadPromises = req.files.map(file => 
+          uploadFeedbackToSupabaseStorage(file, 'feedback')
+        );
+        const uploadResults = await Promise.all(uploadPromises);
+
+        // Simpan ke database
+        const photoData = uploadResults.map(result => ({
+          feedback_id: id,
+          foto_path: result.publicUrl,
+          foto_filename: result.fileName,
+          foto_original_name: result.originalName,
+          file_size: result.size,
+          storage_path: result.fileName,
+          created_at: new Date().toISOString()
+        }));
+
+        const { error: photoError } = await supabase
+          .from('feedback_photos')
+          .insert(photoData);
+
+        if (photoError) {
+          // Rollback: hapus file dari storage
+          const filesToDelete = uploadResults.map(r => r.fileName);
+          await supabase.storage.from('feedback-photos').remove(filesToDelete);
+          return res.status(400).json({ error: 'Gagal simpan foto: ' + photoError.message });
+        }
+
+        newPhotoCount = uploadResults.length;
+      } catch (uploadError) {
+        return res.status(400).json({ error: 'Gagal upload foto: ' + uploadError.message });
+      }
+    }
+
+    // 6. Berhasil
     res.json({
       message: 'Feedback berhasil diupdate',
       new_photos_added: newPhotoCount,
@@ -2523,10 +2542,9 @@ app.put('/api/feedback/:id/edit', authenticateToken, uploadFeedback.array('new_p
     });
 
   } catch (error) {
-    if (req.files?.length > 0) {
-      req.files.forEach(file => fs.unlinkSync(file.path));
-    }
-    res.status(500).json({ error: error.message });
+    // Tidak perlu fs.unlinkSync karena file di memory
+    console.error('Error edit feedback:', error);
+    res.status(500).json({ error: 'Terjadi kesalahan server: ' + error.message });
   }
 });
 
