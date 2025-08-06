@@ -238,8 +238,6 @@ app.get('/api/users/basic', authenticateToken, async (req, res) => {
 
 // Create incoming mail
 const multer = require('multer');
-const path = require('path'); // ✅ TAMBAHKAN INI
-
 // Setup multer untuk upload multiple files
 const storage = multer.memoryStorage();
 
