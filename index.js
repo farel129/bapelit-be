@@ -242,6 +242,19 @@ const multer = require('multer');
 // Setup multer untuk upload multiple files
 const storage = multer.memoryStorage(); // Simpan di memory dulu
 
+// Filter file - hanya izinkan gambar
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = /jpeg|jpg|png|gif|webp/;
+  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+  const mimetype = allowedTypes.test(file.mimetype);
+
+  if (mimetype && extname) {
+    return cb(null, true);
+  } else {
+    cb(new Error('Hanya file gambar (JPEG, JPG, PNG, GIF, WEBP) yang diizinkan!'));
+  }
+};
+
 const upload = multer({
   storage: storage,
   limits: {
@@ -1725,30 +1738,47 @@ app.post('/api/surat/:id/forward', authenticateToken, async (req, res) => {
 
 // Endpoint untuk accept disposisi oleh bawahan
 // Tambahkan multer setup untuk upload feedback photos (tambahkan setelah multer setup yang sudah ada)
-const feedbackStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadPath = 'uploads/feedback/';
-    if (!fs.existsSync(uploadPath)) {
-      fs.mkdirSync(uploadPath, { recursive: true });
-    }
-    cb(null, uploadPath);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'feedback-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
+// ===== GANTI FEEDBACK MULTER SETUP =====
+// Hapus feedbackStorage diskStorage, ganti dengan memoryStorage
 const uploadFeedback = multer({
-  storage: feedbackStorage,
+  storage: multer.memoryStorage(), // ✅ Ganti ke memory storage
   limits: {
-    fileSize: 5 * 1024 * 1024, // Maksimal 5MB per file
-    files: 5 // Maksimal 5 files
+    fileSize: 5 * 1024 * 1024, // 5MB per file
+    files: 5 // Max 5 files
   },
-  fileFilter: fileFilter // Gunakan fileFilter yang sama
+  fileFilter: fileFilter
 });
 
-// Modifikasi endpoint accept untuk menerima feedback
+// ===== FUNGSI HELPER UPLOAD FEEDBACK KE SUPABASE =====
+const uploadFeedbackToSupabaseStorage = async (file, folder = 'feedback') => {
+  const fileExt = path.extname(file.originalname);
+  const fileName = `${folder}/${Date.now()}-${Math.round(Math.random() * 1E9)}${fileExt}`;
+  
+  const { data, error } = await supabase.storage
+    .from('feedback-photos') // ✅ Bucket khusus feedback
+    .upload(fileName, file.buffer, {
+      contentType: file.mimetype,
+      upsert: false
+    });
+
+  if (error) {
+    throw new Error('Upload feedback failed: ' + error.message);
+  }
+
+  // Get public URL
+  const { data: { publicUrl } } = supabase.storage
+    .from('feedback-photos')
+    .getPublicUrl(fileName);
+
+  return {
+    fileName: data.path,
+    publicUrl: publicUrl,
+    size: file.size,
+    originalName: file.originalname
+  };
+};
+
+// ===== GANTI ENDPOINT ACCEPT DENGAN SUPABASE STORAGE =====
 app.post('/api/surat/:id/accept', authenticateToken, uploadFeedback.array('feedback_photos', 5), async (req, res) => {
   try {
     console.log('req.user:', req.user);
@@ -1758,12 +1788,6 @@ app.post('/api/surat/:id/accept', authenticateToken, uploadFeedback.array('feedb
 
     // Validasi input
     if (!atasan_jabatan) {
-      // Hapus file yang sudah diupload jika validasi gagal
-      if (req.files && req.files.length > 0) {
-        req.files.forEach(file => {
-          fs.unlinkSync(file.path);
-        });
-      }
       return res.status(400).json({ error: 'Atasan jabatan wajib diisi' });
     }
 
@@ -1776,12 +1800,6 @@ app.post('/api/surat/:id/accept', authenticateToken, uploadFeedback.array('feedb
       .single();
 
     if (existingFeedback) {
-      // Hapus file yang sudah diupload jika sudah ada feedback
-      if (req.files && req.files.length > 0) {
-        req.files.forEach(file => {
-          fs.unlinkSync(file.path);
-        });
-      }
       return res.status(400).json({ error: 'Anda sudah memberikan feedback untuk surat ini' });
     }
 
@@ -1798,12 +1816,6 @@ app.post('/api/surat/:id/accept', authenticateToken, uploadFeedback.array('feedb
       .single();
 
     if (suratError) {
-      // Hapus file yang sudah diupload jika update surat gagal
-      if (req.files && req.files.length > 0) {
-        req.files.forEach(file => {
-          fs.unlinkSync(file.path);
-        });
-      }
       return res.status(400).json({ error: suratError.message });
     }
 
@@ -1822,12 +1834,6 @@ app.post('/api/surat/:id/accept', authenticateToken, uploadFeedback.array('feedb
       .single();
 
     if (feedbackError) {
-      // Hapus file dan rollback update surat jika gagal simpan feedback
-      if (req.files && req.files.length > 0) {
-        req.files.forEach(file => {
-          fs.unlinkSync(file.path);
-        });
-      }
       // Rollback surat status
       await supabase
         .from('surat_masuk')
@@ -1841,24 +1847,51 @@ app.post('/api/surat/:id/accept', authenticateToken, uploadFeedback.array('feedb
       return res.status(400).json({ error: 'Gagal menyimpan feedback: ' + feedbackError.message });
     }
 
-    // Simpan foto feedback jika ada
+    // ✅ Upload foto feedback ke Supabase Storage
     let photoCount = 0;
     if (req.files && req.files.length > 0) {
-      const photoData = req.files.map(file => ({
-        feedback_id: feedbackResult.id,
-        foto_path: file.path,
-        foto_filename: file.filename,
-        foto_original_name: file.originalname,
-        file_size: file.size,
-        created_at: new Date().toISOString()
-      }));
+      try {
+        // Upload semua foto ke Supabase Storage
+        const uploadPromises = req.files.map(file => uploadFeedbackToSupabaseStorage(file, 'feedback'));
+        const uploadResults = await Promise.all(uploadPromises);
+        
+        // Simpan data foto ke database
+        const photoData = uploadResults.map(result => ({
+          feedback_id: feedbackResult.id,
+          foto_path: result.publicUrl, // ✅ Simpan public URL
+          foto_filename: result.fileName,
+          foto_original_name: result.originalName,
+          file_size: result.size,
+          storage_path: result.fileName, // ✅ Path di Supabase Storage
+          created_at: new Date().toISOString()
+        }));
 
-      const { error: photoError } = await supabase
-        .from('feedback_photos')
-        .insert(photoData);
+        const { error: photoError } = await supabase
+          .from('feedback_photos')
+          .insert(photoData);
 
-      if (photoError) {
-        // Rollback semua jika gagal simpan foto
+        if (photoError) {
+          // Rollback: hapus feedback, reset surat status, dan hapus files dari storage
+          await supabase.from('surat_feedback').delete().eq('id', feedbackResult.id);
+          await supabase
+            .from('surat_masuk')
+            .update({
+              status: 'pending',
+              processed_by: null,
+              accepted_at: null
+            })
+            .eq('id', id);
+
+          // Hapus files dari Supabase Storage
+          const filesToDelete = uploadResults.map(r => r.fileName);
+          await supabase.storage.from('feedback-photos').remove(filesToDelete);
+
+          return res.status(400).json({ error: 'Gagal menyimpan foto feedback: ' + photoError.message });
+        }
+
+        photoCount = req.files.length;
+      } catch (uploadError) {
+        // Rollback feedback dan surat jika upload gagal
         await supabase.from('surat_feedback').delete().eq('id', feedbackResult.id);
         await supabase
           .from('surat_masuk')
@@ -1869,17 +1902,11 @@ app.post('/api/surat/:id/accept', authenticateToken, uploadFeedback.array('feedb
           })
           .eq('id', id);
 
-        req.files.forEach(file => {
-          fs.unlinkSync(file.path);
-        });
-
-        return res.status(400).json({ error: 'Gagal menyimpan foto feedback: ' + photoError.message });
+        return res.status(400).json({ error: 'Gagal upload foto feedback: ' + uploadError.message });
       }
-
-      photoCount = req.files.length;
     }
 
-    // Kirim notifikasi ke atasan
+    // Kirim notifikasi ke atasan (sama seperti sebelumnya)
     const { data: atasan } = await supabase
       .from('users')
       .select('id')
@@ -1935,13 +1962,94 @@ app.post('/api/surat/:id/accept', authenticateToken, uploadFeedback.array('feedb
     });
 
   } catch (error) {
-    // Hapus file yang sudah diupload jika terjadi error
-    if (req.files && req.files.length > 0) {
-      req.files.forEach(file => {
-        fs.unlinkSync(file.path);
-      });
-    }
     console.error('Error in accept with feedback:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== GANTI ENDPOINT GET FEEDBACK PHOTO =====
+app.get('/api/feedback/photo/:photoId', authenticateToken, async (req, res) => {
+  try {
+    const { photoId } = req.params;
+
+    const { data: photo, error } = await supabase
+      .from('feedback_photos')
+      .select('foto_path, foto_filename, foto_original_name, storage_path')
+      .eq('id', photoId)
+      .single();
+
+    if (error || !photo) {
+      return res.status(404).json({ error: 'Foto tidak ditemukan' });
+    }
+
+    // ✅ Redirect langsung ke public URL Supabase
+    if (photo.foto_path && photo.foto_path.startsWith('http')) {
+      return res.redirect(photo.foto_path);
+    }
+
+    // Fallback: generate public URL dari storage_path
+    if (photo.storage_path) {
+      const { data: { publicUrl } } = supabase.storage
+        .from('feedback-photos')
+        .getPublicUrl(photo.storage_path);
+      
+      return res.redirect(publicUrl);
+    }
+
+    return res.status(404).json({ error: 'File foto tidak ditemukan' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== GANTI ENDPOINT DELETE FEEDBACK PHOTO =====
+app.delete('/api/feedback/photo/:photoId', authenticateToken, async (req, res) => {
+  try {
+    const { photoId } = req.params;
+
+    const { data: photo, error: fetchError } = await supabase
+      .from('feedback_photos')
+      .select(`
+        *,
+        surat_feedback (
+          user_id,
+          surat_id
+        )
+      `)
+      .eq('id', photoId)
+      .single();
+
+    if (fetchError || !photo) {
+      return res.status(404).json({ error: 'Foto tidak ditemukan' });
+    }
+
+    // Cek authorization
+    if (photo.surat_feedback.user_id !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Tidak memiliki izin untuk menghapus foto ini' });
+    }
+
+    // Hapus dari database
+    const { error: deleteError } = await supabase
+      .from('feedback_photos')
+      .delete()
+      .eq('id', photoId);
+
+    if (deleteError) {
+      return res.status(400).json({ error: deleteError.message });
+    }
+
+    // ✅ Hapus file dari Supabase Storage
+    if (photo.storage_path) {
+      await supabase.storage
+        .from('feedback-photos')
+        .remove([photo.storage_path]);
+    }
+
+    res.json({
+      message: 'Foto feedback berhasil dihapus'
+    });
+
+  } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
