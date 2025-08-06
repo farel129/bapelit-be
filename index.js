@@ -241,7 +241,6 @@ const multer = require('multer');
 
 // Setup multer untuk upload multiple files
 const storage = multer.memoryStorage(); // Simpan di memory dulu
-
 // Filter file - hanya izinkan gambar
 const fileFilter = (req, file, cb) => {
   const allowedTypes = /jpeg|jpg|png|gif|webp/;
