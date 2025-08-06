@@ -275,12 +275,12 @@ const upload = multer({
 const uploadToSupabaseStorage = async (file, folder = 'surat-masuk', userToken) => {
   const fileExt = path.extname(file.originalname);
   const fileName = `${folder}/${Date.now()}-${Math.round(Math.random() * 1E9)}${fileExt}`;
-  
+
   console.log('Uploading file:', fileName);
   console.log('User token exists:', !!userToken); // ✅ Debug log
-  
+
   const { data, error } = await supabaseAdmin.storage
-    .from('surat-photos') 
+    .from('surat-photos')
     .upload(fileName, file.buffer, {
       contentType: file.mimetype,
       upsert: false
@@ -309,7 +309,7 @@ app.post('/api/surat-masuk', authenticateToken, upload.array('photos', 10), asyn
   try {
     console.log('Request body:', req.body); // ✅ Debug log
     console.log('Files received:', req.files ? req.files.length : 0); // ✅ Debug log
-    
+
     const {
       asal_instansi,
       nomor_surat,
@@ -370,13 +370,13 @@ app.post('/api/surat-masuk', authenticateToken, upload.array('photos', 10), asyn
     if (req.files && req.files.length > 0) {
       // ✅ PASS USER INFO KE UPLOAD FUNCTION
       console.log('User info:', req.user); // Debug log
-      const uploadPromises = req.files.map(file => 
+      const uploadPromises = req.files.map(file =>
         uploadToSupabaseStorage(file, 'surat-masuk', req.headers.authorization?.replace('Bearer ', ''))
       );
-      
+
       try {
         const uploadResults = await Promise.all(uploadPromises);
-        
+
         // Simpan data foto ke database
         const photoData = uploadResults.map(result => ({
           surat_id: suratResult.id,
@@ -395,11 +395,11 @@ app.post('/api/surat-masuk', authenticateToken, upload.array('photos', 10), asyn
         if (photoError) {
           // Rollback: hapus surat dan files dari storage
           await supabase.from('surat_masuk').delete().eq('id', suratResult.id);
-          
+
           // Hapus files dari Supabase Storage
           const filesToDelete = uploadResults.map(r => r.fileName);
           await supabase.storage.from('surat-photos').remove(filesToDelete);
-          
+
           return res.status(400).json({ error: 'Gagal menyimpan foto: ' + photoError.message });
         }
 
@@ -709,7 +709,7 @@ app.get('/api/surat-masuk/photo/:photoId', authenticateToken, async (req, res) =
       const { data: { publicUrl } } = supabase.storage
         .from('surat-photos')
         .getPublicUrl(photo.storage_path);
-      
+
       return res.redirect(publicUrl);
     }
 
@@ -1214,7 +1214,8 @@ app.get('/api/surat/:id/pdf', authenticateToken, async (req, res) => {
     });
 
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+    await page.setContent(html, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(2000); // Beri waktu ekstra agar font & layout stabil
     const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true });
     await browser.close();
 
@@ -1788,7 +1789,7 @@ const uploadFeedback = multer({
 const uploadFeedbackToSupabaseStorage = async (file, folder = 'feedback') => {
   const fileExt = path.extname(file.originalname);
   const fileName = `${folder}/${Date.now()}-${Math.round(Math.random() * 1E9)}${fileExt}`;
-  
+
   const { data, error } = await supabaseAdmin.storage
     .from('feedback-photos') // ✅ Bucket khusus feedback
     .upload(fileName, file.buffer, {
@@ -1889,7 +1890,7 @@ app.post('/api/surat/:id/accept', authenticateToken, uploadFeedback.array('feedb
         // Upload semua foto ke Supabase Storage
         const uploadPromises = req.files.map(file => uploadFeedbackToSupabaseStorage(file, 'feedback'));
         const uploadResults = await Promise.all(uploadPromises);
-        
+
         // Simpan data foto ke database
         const photoData = uploadResults.map(result => ({
           feedback_id: feedbackResult.id,
@@ -1948,7 +1949,7 @@ app.post('/api/surat/:id/accept', authenticateToken, uploadFeedback.array('feedb
       .eq('jabatan', atasan_jabatan);
 
     if (atasan && atasan.length > 0) {
-      const notificationMessage = feedback_notes || photoCount > 0 
+      const notificationMessage = feedback_notes || photoCount > 0
         ? `${req.user.name} telah menerima disposisi dengan feedback${feedback_notes ? ': ' + feedback_notes.substring(0, 50) + '...' : ''}`
         : `Disposisi telah diterima oleh ${req.user.name}`;
 
@@ -1972,7 +1973,7 @@ app.post('/api/surat/:id/accept', authenticateToken, uploadFeedback.array('feedb
       action: 'accept_with_feedback',
       details: `Disposisi diterima dengan feedback${feedback_notes ? ': ' + feedback_notes.substring(0, 100) : ''}${photoCount > 0 ? ` dan ${photoCount} foto` : ''}`,
       old_values: JSON.stringify({ status: 'pending' }),
-      new_values: JSON.stringify({ 
+      new_values: JSON.stringify({
         status: 'processed',
         feedback_notes,
         photo_count: photoCount
@@ -2027,7 +2028,7 @@ app.get('/api/feedback/photo/:photoId', authenticateToken, async (req, res) => {
       const { data: { publicUrl } } = supabase.storage
         .from('feedback-photos')
         .getPublicUrl(photo.storage_path);
-      
+
       return res.redirect(publicUrl);
     }
 
@@ -2381,7 +2382,7 @@ app.get('/api/feedback/export', authenticateToken, async (req, res) => {
       'Asal Instansi': feedback.surat_masuk?.asal_instansi || '-',
       'Tujuan Jabatan': feedback.surat_masuk?.tujuan_jabatan || '-',
       'Perihal': feedback.surat_masuk?.perihal || '-',
-      'Tanggal Surat': feedback.surat_masuk?.surat_created_at 
+      'Tanggal Surat': feedback.surat_masuk?.surat_created_at
         ? new Date(feedback.surat_masuk.surat_created_at).toLocaleDateString('id-ID')
         : '-',
       'Catatan Feedback': feedback.feedback_notes || '-',
@@ -2395,10 +2396,10 @@ app.get('/api/feedback/export', authenticateToken, async (req, res) => {
         // Header
         Object.keys(exportData[0] || {}).join(','),
         // Data rows
-        ...exportData.map(row => 
-          Object.values(row).map(value => 
-            typeof value === 'string' && value.includes(',') 
-              ? `"${value}"` 
+        ...exportData.map(row =>
+          Object.values(row).map(value =>
+            typeof value === 'string' && value.includes(',')
+              ? `"${value}"`
               : value
           ).join(',')
         )
@@ -2445,8 +2446,8 @@ app.put('/api/feedback/:id/edit', authenticateToken, uploadFeedback.array('new_p
     const oneHour = 60 * 60 * 1000; // 1 jam
 
     if (timeDiff > oneHour) {
-      return res.status(400).json({ 
-        error: 'Waktu edit feedback sudah habis (maksimal 1 jam setelah submit)' 
+      return res.status(400).json({
+        error: 'Waktu edit feedback sudah habis (maksimal 1 jam setelah submit)'
       });
     }
 
@@ -2465,8 +2466,8 @@ app.put('/api/feedback/:id/edit', authenticateToken, uploadFeedback.array('new_p
 
     // 4. Hapus foto lama (jika diminta)
     if (remove_photo_ids) {
-      const photoIdsToRemove = Array.isArray(remove_photo_ids) 
-        ? remove_photo_ids 
+      const photoIdsToRemove = Array.isArray(remove_photo_ids)
+        ? remove_photo_ids
         : [remove_photo_ids];
 
       // Ambil data foto (termasuk storage_path) dari Supabase
@@ -2509,7 +2510,7 @@ app.put('/api/feedback/:id/edit', authenticateToken, uploadFeedback.array('new_p
     let newPhotoCount = 0;
     if (req.files && req.files.length > 0) {
       try {
-        const uploadPromises = req.files.map(file => 
+        const uploadPromises = req.files.map(file =>
           uploadFeedbackToSupabaseStorage(file, 'feedback')
         );
         const uploadResults = await Promise.all(uploadPromises);
@@ -2581,8 +2582,8 @@ app.delete('/api/feedback/:id', authenticateToken, async (req, res) => {
     const thirtyMinutes = 30 * 60 * 1000;
 
     if (timeDiff > thirtyMinutes) {
-      return res.status(400).json({ 
-        error: 'Waktu delete feedback sudah habis (maksimal 30 menit setelah submit)' 
+      return res.status(400).json({
+        error: 'Waktu delete feedback sudah habis (maksimal 30 menit setelah submit)'
       });
     }
 
