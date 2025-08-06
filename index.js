@@ -265,11 +265,17 @@ const upload = multer({
 });
 
 // ===== FUNGSI HELPER UPLOAD KE SUPABASE =====
-const uploadToSupabaseStorage = async (file, folder = 'surat-masuk') => {
+const uploadToSupabaseStorage = async (file, folder = 'surat-masuk', userToken) => {
   const fileExt = path.extname(file.originalname);
   const fileName = `${folder}/${Date.now()}-${Math.round(Math.random() * 1E9)}${fileExt}`;
   
-  console.log('Uploading file:', fileName); // ✅ Debug log
+  console.log('Uploading file:', fileName);
+  console.log('User token exists:', !!userToken); // ✅ Debug log
+  
+  // ✅ GUNAKAN USER TOKEN UNTUK STORAGE
+  const supabaseWithAuth = userToken ? 
+    supabase.auth.setSession({ access_token: userToken }) : 
+    supabase;
   
   const { data, error } = await supabase.storage
     .from('surat-photos') 
@@ -279,7 +285,7 @@ const uploadToSupabaseStorage = async (file, folder = 'surat-masuk') => {
     });
 
   if (error) {
-    console.log('Supabase storage error:', error); // ✅ Debug log
+    console.log('Supabase storage error:', error);
     throw new Error(`Upload failed: ${error.message}. Details: ${JSON.stringify(error)}`);
   }
 
@@ -360,7 +366,11 @@ app.post('/api/surat-masuk', authenticateToken, upload.array('photos', 10), asyn
     // Upload photos ke Supabase Storage
     let photoCount = 0;
     if (req.files && req.files.length > 0) {
-      const uploadPromises = req.files.map(file => uploadToSupabaseStorage(file, 'surat-masuk'));
+      // ✅ PASS USER INFO KE UPLOAD FUNCTION
+      console.log('User info:', req.user); // Debug log
+      const uploadPromises = req.files.map(file => 
+        uploadToSupabaseStorage(file, 'surat-masuk', req.headers.authorization?.replace('Bearer ', ''))
+      );
       
       try {
         const uploadResults = await Promise.all(uploadPromises);
