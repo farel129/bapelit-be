@@ -1165,11 +1165,11 @@ const prepareTemplateData = (surat) => {
 };
 
 // 📄 Endpoint untuk generate PDF
+// 📄 Endpoint untuk generate PDF
 app.get('/api/surat/:id/pdf', authenticateToken, async (req, res) => {
   try {
     console.log('📥 Permintaan PDF untuk surat ID:', req.params.id);
 
-    // Ambil data dari Supabase
     const { data: surat, error } = await supabase
       .from('surat_masuk')
       .select(`
@@ -1185,7 +1185,6 @@ app.get('/api/surat/:id/pdf', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Surat not found', detail: error?.message });
     }
 
-    // Siapkan path & template
     const templatePath = path.join(__dirname, 'templates', 'disposisi.html');
     const htmlTemplate = fs.readFileSync(templatePath, 'utf8');
     const template = Handlebars.compile(htmlTemplate);
@@ -1202,11 +1201,20 @@ app.get('/api/surat/:id/pdf', authenticateToken, async (req, res) => {
       jabatan: surat.processed_user?.jabatan || '-'
     });
 
-    // Generate PDF pakai Puppeteer
-    const browser = await puppeteer.launch({ headless: 'new' });
+    // ✅ Perbaikan: Tambahkan args penting
+    const browser = await puppeteer.launch({
+      headless: 'new',
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-software-rasterizer'
+      ]
+    });
+
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle0' });
-
     const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true });
     await browser.close();
 
