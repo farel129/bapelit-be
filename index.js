@@ -238,6 +238,7 @@ app.get('/api/users/basic', authenticateToken, async (req, res) => {
 
 // Create incoming mail
 const multer = require('multer');
+
 // Setup multer untuk upload multiple files
 const storage = multer.memoryStorage();
 
@@ -268,6 +269,8 @@ const uploadToSupabaseStorage = async (file, folder = 'surat-masuk') => {
   const fileExt = path.extname(file.originalname);
   const fileName = `${folder}/${Date.now()}-${Math.round(Math.random() * 1E9)}${fileExt}`;
   
+  console.log('Uploading file:', fileName); // ✅ Debug log
+  
   const { data, error } = await supabase.storage
     .from('surat-photos') 
     .upload(fileName, file.buffer, {
@@ -276,7 +279,8 @@ const uploadToSupabaseStorage = async (file, folder = 'surat-masuk') => {
     });
 
   if (error) {
-    throw new Error('Upload failed: ' + error.message);
+    console.log('Supabase storage error:', error); // ✅ Debug log
+    throw new Error(`Upload failed: ${error.message}. Details: ${JSON.stringify(error)}`);
   }
 
   // Get public URL
