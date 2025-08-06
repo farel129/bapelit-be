@@ -240,45 +240,49 @@ app.get('/api/users/basic', authenticateToken, async (req, res) => {
 const multer = require('multer');
 
 // Setup multer untuk upload multiple files
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadPath = 'uploads/surat-masuk/';
-    // Buat folder jika belum ada
-    if (!fs.existsSync(uploadPath)) {
-      fs.mkdirSync(uploadPath, { recursive: true });
-    }
-    cb(null, uploadPath);
-  },
-  filename: (req, file, cb) => {
-    // Generate nama file unik dengan timestamp
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'surat-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
-// Filter file - hanya izinkan gambar
-const fileFilter = (req, file, cb) => {
-  const allowedTypes = /jpeg|jpg|png|gif|webp/;
-  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-  const mimetype = allowedTypes.test(file.mimetype);
-
-  if (mimetype && extname) {
-    return cb(null, true);
-  } else {
-    cb(new Error('Hanya file gambar (JPEG, JPG, PNG, GIF, WEBP) yang diizinkan!'));
-  }
-};
+const storage = multer.memoryStorage(); // Simpan di memory dulu
 
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 5 * 1024 * 1024, // Maksimal 5MB per file
-    files: 10 // Maksimal 10 files
+    fileSize: 5 * 1024 * 1024, // 5MB
+    files: 10
   },
   fileFilter: fileFilter
 });
 
+// ===== FUNGSI HELPER UPLOAD KE SUPABASE =====
+const uploadToSupabaseStorage = async (file, folder = 'surat-masuk') => {
+  const fileExt = path.extname(file.originalname);
+  const fileName = `${folder}/${Date.now()}-${Math.round(Math.random() * 1E9)}${fileExt}`;
+  
+  const { data, error } = await supabase.storage
+    .from('surat-photos') // nama bucket
+    .upload(fileName, file.buffer, {
+      contentType: file.mimetype,
+      upsert: false
+    });
+
+  if (error) {
+    throw new Error('Upload failed: ' + error.message);
+  }
+
+  // Get public URL
+  const { data: { publicUrl } } = supabase.storage
+    .from('surat-photos')
+    .getPublicUrl(fileName);
+
+  return {
+    fileName: data.path,
+    publicUrl: publicUrl,
+    size: file.size,
+    originalName: file.originalname
+  };
+};
+
+
 // POST endpoint dengan upload multiple photos
+// ===== GANTI ENDPOINT POST SURAT-MASUK =====
 app.post('/api/surat-masuk', authenticateToken, upload.array('photos', 10), async (req, res) => {
   try {
     const {
@@ -295,18 +299,12 @@ app.post('/api/surat-masuk', authenticateToken, upload.array('photos', 10), asyn
 
     // Validasi input
     if (!asal_instansi || !nomor_surat || !tujuan_jabatan) {
-      // Hapus file yang sudah diupload jika validasi gagal
-      if (req.files && req.files.length > 0) {
-        req.files.forEach(file => {
-          fs.unlinkSync(file.path);
-        });
-      }
       return res.status(400).json({
         error: 'Asal instansi, nomor surat, dan tujuan jabatan wajib diisi'
       });
     }
 
-    // Siapkan data untuk insert surat
+    // Insert surat dulu
     const suratData = {
       asal_instansi,
       nomor_surat,
@@ -321,10 +319,8 @@ app.post('/api/surat-masuk', authenticateToken, upload.array('photos', 10), asyn
       status: 'pending',
       created_at: new Date().toISOString(),
       processed_at: new Date().toISOString(),
-
     };
 
-    // Insert surat masuk terlebih dahulu
     const { data: suratResult, error: suratError } = await supabase
       .from('surat_masuk')
       .insert([suratData])
@@ -332,44 +328,52 @@ app.post('/api/surat-masuk', authenticateToken, upload.array('photos', 10), asyn
       .single();
 
     if (suratError) {
-      // Hapus file yang sudah diupload jika database insert gagal
-      if (req.files && req.files.length > 0) {
-        req.files.forEach(file => {
-          fs.unlinkSync(file.path);
-        });
-      }
       return res.status(400).json({ error: suratError.message });
     }
 
-    // Simpan data foto-foto jika ada
+    // Upload photos ke Supabase Storage
     let photoCount = 0;
     if (req.files && req.files.length > 0) {
-      const photoData = req.files.map(file => ({
-        surat_id: suratResult.id,
-        foto_path: file.path,
-        foto_filename: file.filename,
-        foto_original_name: file.originalname,
-        file_size: file.size,
-        created_at: new Date().toISOString()
-      }));
+      const uploadPromises = req.files.map(file => uploadToSupabaseStorage(file, 'surat-masuk'));
+      
+      try {
+        const uploadResults = await Promise.all(uploadPromises);
+        
+        // Simpan data foto ke database
+        const photoData = uploadResults.map(result => ({
+          surat_id: suratResult.id,
+          foto_path: result.publicUrl, // ✅ Simpan public URL
+          foto_filename: result.fileName,
+          foto_original_name: result.originalName,
+          file_size: result.size,
+          storage_path: result.fileName, // path di Supabase Storage
+          created_at: new Date().toISOString()
+        }));
 
-      const { error: photoError } = await supabase
-        .from('surat_photos')
-        .insert(photoData);
+        const { error: photoError } = await supabase
+          .from('surat_photos')
+          .insert(photoData);
 
-      if (photoError) {
-        // Jika gagal simpan foto, hapus surat dan semua file
+        if (photoError) {
+          // Rollback: hapus surat dan files dari storage
+          await supabase.from('surat_masuk').delete().eq('id', suratResult.id);
+          
+          // Hapus files dari Supabase Storage
+          const filesToDelete = uploadResults.map(r => r.fileName);
+          await supabase.storage.from('surat-photos').remove(filesToDelete);
+          
+          return res.status(400).json({ error: 'Gagal menyimpan foto: ' + photoError.message });
+        }
+
+        photoCount = req.files.length;
+      } catch (uploadError) {
+        // Rollback surat jika upload gagal
         await supabase.from('surat_masuk').delete().eq('id', suratResult.id);
-        req.files.forEach(file => {
-          fs.unlinkSync(file.path);
-        });
-        return res.status(400).json({ error: 'Gagal menyimpan foto: ' + photoError.message });
+        return res.status(400).json({ error: 'Gagal upload foto: ' + uploadError.message });
       }
-
-      photoCount = req.files.length;
     }
 
-    // Create notification for target jabatan
+    // Create notifications (sama seperti sebelumnya)
     const { data: targetUsers } = await supabase
       .from('users')
       .select('id')
@@ -384,9 +388,7 @@ app.post('/api/surat-masuk', authenticateToken, upload.array('photos', 10), asyn
         created_at: new Date().toISOString()
       }));
 
-      await supabase
-        .from('notifications')
-        .insert(notifications);
+      await supabase.from('notifications').insert(notifications);
     }
 
     res.status(201).json({
@@ -398,12 +400,6 @@ app.post('/api/surat-masuk', authenticateToken, upload.array('photos', 10), asyn
       }
     });
   } catch (error) {
-    // Hapus file yang sudah diupload jika terjadi error
-    if (req.files && req.files.length > 0) {
-      req.files.forEach(file => {
-        fs.unlinkSync(file.path);
-      });
-    }
     res.status(500).json({ error: error.message });
   }
 });
@@ -648,53 +644,36 @@ app.get('/api/surat-masuk/all', authenticateToken, async (req, res) => {
 });
 
 // GET endpoint untuk mengambil foto tertentu berdasarkan photo ID
+// ===== GANTI ENDPOINT GET PHOTO =====
 app.get('/api/surat-masuk/photo/:photoId', authenticateToken, async (req, res) => {
   try {
     const { photoId } = req.params;
 
-    // Ambil data foto
     const { data: photo, error } = await supabase
       .from('surat_photos')
-      .select('foto_path, foto_filename, foto_original_name')
+      .select('foto_path, foto_filename, foto_original_name, storage_path')
       .eq('id', photoId)
       .single();
 
-    if (error) {
-      return res.status(400).json({ error: error.message });
-    }
-
-    if (!photo || !photo.foto_path) {
+    if (error || !photo) {
       return res.status(404).json({ error: 'Foto tidak ditemukan' });
     }
 
-    // Cek apakah file masih ada
-    if (!fs.existsSync(photo.foto_path)) {
-      return res.status(404).json({ error: 'File foto tidak ditemukan' });
+    // ✅ Redirect langsung ke public URL Supabase
+    if (photo.foto_path && photo.foto_path.startsWith('http')) {
+      return res.redirect(photo.foto_path);
     }
 
-    // Set header content type berdasarkan ekstensi file
-    const ext = path.extname(photo.foto_filename).toLowerCase();
-    let contentType = 'image/jpeg'; // default
-
-    switch (ext) {
-      case '.png':
-        contentType = 'image/png';
-        break;
-      case '.gif':
-        contentType = 'image/gif';
-        break;
-      case '.webp':
-        contentType = 'image/webp';
-        break;
+    // Fallback: generate public URL dari storage_path
+    if (photo.storage_path) {
+      const { data: { publicUrl } } = supabase.storage
+        .from('surat-photos')
+        .getPublicUrl(photo.storage_path);
+      
+      return res.redirect(publicUrl);
     }
 
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `inline; filename="${photo.foto_original_name}"`);
-
-    // Stream file ke response
-    const fileStream = fs.createReadStream(photo.foto_path);
-    fileStream.pipe(res);
-
+    return res.status(404).json({ error: 'File foto tidak ditemukan' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
