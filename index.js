@@ -238,9 +238,11 @@ app.get('/api/users/basic', authenticateToken, async (req, res) => {
 
 // Create incoming mail
 const multer = require('multer');
+const path = require('path'); // ✅ TAMBAHKAN INI
 
 // Setup multer untuk upload multiple files
-const storage = multer.memoryStorage(); // Simpan di memory dulu
+const storage = multer.memoryStorage();
+
 // Filter file - hanya izinkan gambar
 const fileFilter = (req, file, cb) => {
   const allowedTypes = /jpeg|jpg|png|gif|webp/;
@@ -269,7 +271,7 @@ const uploadToSupabaseStorage = async (file, folder = 'surat-masuk') => {
   const fileName = `${folder}/${Date.now()}-${Math.round(Math.random() * 1E9)}${fileExt}`;
   
   const { data, error } = await supabase.storage
-    .from('surat-photos') // nama bucket
+    .from('surat-photos') 
     .upload(fileName, file.buffer, {
       contentType: file.mimetype,
       upsert: false
@@ -292,11 +294,12 @@ const uploadToSupabaseStorage = async (file, folder = 'surat-masuk') => {
   };
 };
 
-
-// POST endpoint dengan upload multiple photos
-// ===== GANTI ENDPOINT POST SURAT-MASUK =====
+// ✅ PERBAIKI ENDPOINT POST SURAT-MASUK
 app.post('/api/surat-masuk', authenticateToken, upload.array('photos', 10), async (req, res) => {
   try {
+    console.log('Request body:', req.body); // ✅ Debug log
+    console.log('Files received:', req.files ? req.files.length : 0); // ✅ Debug log
+    
     const {
       asal_instansi,
       nomor_surat,
@@ -309,10 +312,18 @@ app.post('/api/surat-masuk', authenticateToken, upload.array('photos', 10), asyn
       catatan
     } = req.body;
 
-    // Validasi input
-    if (!asal_instansi || !nomor_surat || !tujuan_jabatan) {
+    // ✅ VALIDASI INPUT YANG LEBIH LENGKAP
+    if (!asal_instansi || !nomor_surat || !tujuan_jabatan || !keterangan) {
       return res.status(400).json({
-        error: 'Asal instansi, nomor surat, dan tujuan jabatan wajib diisi'
+        error: 'Asal instansi, nomor surat, tujuan jabatan, dan keterangan wajib diisi',
+        received: { asal_instansi, nomor_surat, tujuan_jabatan, keterangan }
+      });
+    }
+
+    // ✅ VALIDASI FILES
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({
+        error: 'Minimal 1 foto surat harus diupload'
       });
     }
 
@@ -340,6 +351,7 @@ app.post('/api/surat-masuk', authenticateToken, upload.array('photos', 10), asyn
       .single();
 
     if (suratError) {
+      console.log('Supabase error:', suratError); // ✅ Debug log
       return res.status(400).json({ error: suratError.message });
     }
 
@@ -354,11 +366,11 @@ app.post('/api/surat-masuk', authenticateToken, upload.array('photos', 10), asyn
         // Simpan data foto ke database
         const photoData = uploadResults.map(result => ({
           surat_id: suratResult.id,
-          foto_path: result.publicUrl, // ✅ Simpan public URL
+          foto_path: result.publicUrl,
           foto_filename: result.fileName,
           foto_original_name: result.originalName,
           file_size: result.size,
-          storage_path: result.fileName, // path di Supabase Storage
+          storage_path: result.fileName,
           created_at: new Date().toISOString()
         }));
 
@@ -379,13 +391,14 @@ app.post('/api/surat-masuk', authenticateToken, upload.array('photos', 10), asyn
 
         photoCount = req.files.length;
       } catch (uploadError) {
+        console.log('Upload error:', uploadError); // ✅ Debug log
         // Rollback surat jika upload gagal
         await supabase.from('surat_masuk').delete().eq('id', suratResult.id);
         return res.status(400).json({ error: 'Gagal upload foto: ' + uploadError.message });
       }
     }
 
-    // Create notifications (sama seperti sebelumnya)
+    // Create notifications
     const { data: targetUsers } = await supabase
       .from('users')
       .select('id')
@@ -412,6 +425,7 @@ app.post('/api/surat-masuk', authenticateToken, upload.array('photos', 10), asyn
       }
     });
   } catch (error) {
+    console.log('Server error:', error); // ✅ Debug log
     res.status(500).json({ error: error.message });
   }
 });
