@@ -18,6 +18,13 @@ const supabase = createClient(
   process.env.SUPABASE_ANON_KEY
 );
 
+// Client khusus untuk operasi admin (upload, delete, dll)
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
+  { auth: { persistSession: false } } // penting: jangan persist session
+);
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -272,12 +279,7 @@ const uploadToSupabaseStorage = async (file, folder = 'surat-masuk', userToken) 
   console.log('Uploading file:', fileName);
   console.log('User token exists:', !!userToken); // ✅ Debug log
   
-  // ✅ GUNAKAN USER TOKEN UNTUK STORAGE
-  const supabaseWithAuth = userToken ? 
-    supabase.auth.setSession({ access_token: userToken }) : 
-    supabase;
-  
-  const { data, error } = await supabase.storage
+  const { data, error } = await supabaseAdmin.storage
     .from('surat-photos') 
     .upload(fileName, file.buffer, {
       contentType: file.mimetype,
