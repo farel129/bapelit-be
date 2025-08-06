@@ -1165,10 +1165,7 @@ const prepareTemplateData = (surat) => {
 };
 
 // 📄 Endpoint untuk generate PDF
-// 📄 Endpoint untuk generate PDF - FIXED VERSION
 app.get('/api/surat/:id/pdf', authenticateToken, async (req, res) => {
-  let browser = null;
-  
   try {
     console.log('📥 Permintaan PDF untuk surat ID:', req.params.id);
 
@@ -1205,47 +1202,14 @@ app.get('/api/surat/:id/pdf', authenticateToken, async (req, res) => {
       jabatan: surat.processed_user?.jabatan || '-'
     });
 
-    // 🔥 PERBAIKAN: Konfigurasi Puppeteer untuk Railway/Production
-    const isProduction = process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT;
-    
-    const puppeteerConfig = {
-      headless: 'new',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process', // ← Important for Railway
-        '--disable-gpu'
-      ]
-    };
-
-    // Tambah executable path jika di production
-    if (isProduction) {
-      // Railway biasanya punya Chrome di path ini
-      puppeteerConfig.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium-browser';
-    }
-
-    console.log('🚀 Launching browser dengan config:', puppeteerConfig);
-    
     // Generate PDF pakai Puppeteer
-    browser = await puppeteer.launch(puppeteerConfig);
+    const browser = await puppeteer.launch({ headless: 'new' });
     const page = await browser.newPage();
-    
-    // Set timeout lebih lama untuk production
-    await page.setDefaultNavigationTimeout(30000);
-    await page.setDefaultTimeout(30000);
-    
     await page.setContent(html, { waitUntil: 'networkidle0' });
 
-    const pdfBuffer = await page.pdf({ 
-      format: 'A4', 
-      printBackground: true,
-      timeout: 30000 // 30 detik timeout
-    });
-    
+    const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true });
+    await browser.close();
+
     console.log('✅ PDF berhasil dibuat. Mengirim ke client...');
 
     res.setHeader('Content-Type', 'application/pdf');
@@ -1254,24 +1218,9 @@ app.get('/api/surat/:id/pdf', authenticateToken, async (req, res) => {
       `attachment; filename="disposisi-${surat.nomor_surat || surat.id}.pdf"`
     );
     res.send(pdfBuffer);
-    
   } catch (err) {
     console.error('❌ Gagal generate PDF:', err);
-    res.status(500).json({ 
-      error: 'Gagal membuat PDF. Cek log server.',
-      detail: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-    });
-  } finally {
-    // 🚨 PENTING: Selalu tutup browser
-    if (browser) {
-      try {
-        await browser.close();
-        console.log('🔒 Browser ditutup');
-      } catch (closeError) {
-        console.error('⚠️ Error tutup browser:', closeError);
-      }
-    }
+    res.status(500).json({ error: 'Gagal membuat PDF. Cek log server.' });
   }
 });
 
