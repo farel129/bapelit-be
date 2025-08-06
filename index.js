@@ -1,10 +1,8 @@
-// server.js
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
-const PDFDocument = require('pdfkit');
 require('dotenv').config();
 const puppeteer = require('puppeteer');
 const Handlebars = require('handlebars');
