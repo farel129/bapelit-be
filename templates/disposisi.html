@@ -218,20 +218,20 @@
                 <br>
                 <div>
                     <span class="field-label">Tgl. Surat :</span>
-                    <span class="field-line">{{tanggalIndo created_at}}</span>
+                    <span class="field-line">{{tanggal_surat}}</span>
 
                 </div>
             </td>
             <td class="right-column">
                 <div>
                     <span class="field-label">Diterima Tgl :</span>
-                    <span class="field-line">{{tanggalIndo processed_at}}</span>
+                    <span class="field-line">{{diterima_tanggal}}</span>
                 </div>
 
                 <br>
                 <div>
                     <span class="field-label">No. Agenda :</span>
-                    <span class="field-line"></span>
+                    <span class="field-line">{{nomor_agenda}}</span>
                 </div>
 
                 <br>
@@ -256,76 +256,76 @@
                 <div class="section-title">DITERUSKAN KEPADA</div>
                 <div class="section-title">Yth.</div>
                 <div class="checkbox-list">
-                    <div><span class="checkbox">{{#if (eq disposisi_kepada "Sekretaris")}}✔{{/if}}</span><strong>Sekretaris</strong></div>
-                    <div style="margin-left: 20px;"><span class="checkbox">{{#if (eq disposisi_kepada "Kasubag Umum dan Kepegawaian")}}✔{{/if}}</span>Kasubag Umum dan Kepegawaian</div>
-                    <div style="margin-left: 20px;"><span class="checkbox">{{#if (eq disposisi_kepada "Kasubag Keuangan")}}✔{{/if}}</span>Kasubag Keuangan</div>
+                    <div><span class="checkbox">{{#if (eq disposisi_kepada_jabatan "Sekretaris")}}✔{{/if}}</span><strong>Sekretaris</strong></div>
+                    <div style="margin-left: 20px;"><span class="checkbox">{{#if (eq disposisi_kepada_jabatan "Kasubag Umum dan Kepegawaian")}}✔{{/if}}</span>Kasubag Umum dan Kepegawaian</div>
+                    <div style="margin-left: 20px;"><span class="checkbox">{{#if (eq disposisi_kepada_jabatan "Kasubag Keuangan")}}✔{{/if}}</span>Kasubag Keuangan</div>
                     <br>
-                    <div><span class="checkbox">{{#if (eq disposisi_kepada "Kabid Pendanaan, Pengendalian, dan Evaluasi")}}✔{{/if}}</span><strong>Kabid Pendanaan, Pengendalian,</strong></div>
+                    <div><span class="checkbox">{{#if (eq disposisi_kepada_jabatan "Kabid Pendanaan, Pengendalian, dan Evaluasi")}}✔{{/if}}</span><strong>Kabid Pendanaan, Pengendalian,</strong></div>
                     <div style="margin-left: 20px;"><strong>dan Evaluasi</strong></div>
                     <br>
-                    <div><span class="checkbox">{{#if (eq disposisi_kepada "Kabid Pemerintahan dan Pembangunan Manusia")}}✔{{/if}}</span><strong>Kabid Pemerintahan dan Pembangunan</strong></div>
+                    <div><span class="checkbox">{{#if (eq disposisi_kepada_jabatan "Kabid Pemerintahan dan Pembangunan Manusia")}}✔{{/if}}</span><strong>Kabid Pemerintahan dan Pembangunan</strong></div>
                     <div style="margin-left: 20px;"><strong>Manusia</strong></div>
                     <br>
-                    <div><span class="checkbox">{{#if (eq disposisi_kepada "Kabid Perekonomian, Infrastruktur, dan Kewilayahan")}}✔{{/if}}</span><strong>Kabid Perekonomian, Infrastruktur,</strong></div>
+                    <div><span class="checkbox">{{#if (eq disposisi_kepada_jabatan "Kabid Perekonomian, Infrastruktur, dan Kewilayahan")}}✔{{/if}}</span><strong>Kabid Perekonomian, Infrastruktur,</strong></div>
                     <div style="margin-left: 20px;"><strong>dan Kewilayahan</strong></div>
                     <br>
-                    <div><span class="checkbox">{{#if (eq disposisi_kepada "Kabid Penelitian dan Pengembangan")}}✔{{/if}}</span><strong>Kabid Penelitian dan Pengembangan</strong></div>
+                    <div><span class="checkbox">{{#if (eq disposisi_kepada_jabatan "Kabid Penelitian dan Pengembangan")}}✔{{/if}}</span><strong>Kabid Penelitian dan Pengembangan</strong></div>
                 </div>
             </div>
             <div class="right-content">
                 <div class="section-title">Dengan hormat harap :</div>
                 <div class="checkbox-list">
                     <div>
-                <span class="checkbox">{{#if (includes tindakanArray "Tanggapan dan Saran")}}✔{{/if}}</span>
+                <span class="checkbox">{{#if (ek dengan_hormat_harap "Tanggapan dan Saran")}}✔{{/if}}</span>
                 Tanggapan dan Saran
             </div>
             <div>
-                <span class="checkbox">{{#if (includes tindakanArray "Wakili / Hadir / Terima")}}✔{{/if}}</span>
+                <span class="checkbox">{{#if (ek dengan_hormat_harap "Wakili / Hadir / Terima")}}✔{{/if}}</span>
                 Wakili / Hadir / Terima
             </div>
             <div>
-                <span class="checkbox">{{#if (includes tindakanArray "Mendampingi Saya")}}✔{{/if}}</span>
+                <span class="checkbox">{{#if (ek dengan_hormat_harap "Mendampingi Saya")}}✔{{/if}}</span>
                 Mendampingi Saya
             </div>
             <div>
-                <span class="checkbox">{{#if (includes tindakanArray "Untuk Ditindaklanjuti")}}✔{{/if}}</span>
+                <span class="checkbox">{{#if (ek dengan_hormat_harap "Untuk Ditindaklanjuti")}}✔{{/if}}</span>
                 Untuk Ditindaklanjuti
             </div>
             <div>
-                <span class="checkbox">{{#if (includes tindakanArray "Pelajari / Telaa'h / Sarannya")}}✔{{/if}}</span>
+                <span class="checkbox">{{#if (ek dengan_hormat_harap "Pelajari / Telaa'h / Sarannya")}}✔{{/if}}</span>
                 Pelajari / Telaa'h / Sarannya
             </div>
             <div>
-                <span class="checkbox">{{#if (includes tindakanArray "Untuk Dikaji Sesuai dengan Ketentuan")}}✔{{/if}}</span>
+                <span class="checkbox">{{#if (ek dengan_hormat_harap "Untuk Dikaji Sesuai dengan Ketentuan")}}✔{{/if}}</span>
                 Untuk Dikaji Sesuai dengan Ketentuan
             </div>
             <div>
-                <span class="checkbox">{{#if (includes tindakanArray "Untuk Dibantu / Dipertimbangkan / Sesuai dengan Ketentuan")}}✔{{/if}}</span>
+                <span class="checkbox">{{#if (ek dengan_hormat_harap "Untuk Dibantu / Dipertimbangkan / Sesuai dengan Ketentuan")}}✔{{/if}}</span>
                 Untuk Dibantu / Dipertimbangkan /
             </div>
             <div style="margin-left: 20px;">Sesuai dengan Ketentuan</div>
             <div>
-                <span class="checkbox">{{#if (includes tindakanArray "Selesaikan / Proses Sesuai Ketentuan")}}✔{{/if}}</span>
+                <span class="checkbox">{{#if (ek dengan_hormat_harap "Selesaikan / Proses Sesuai Ketentuan")}}✔{{/if}}</span>
                 Selesaikan / Proses Sesuai Ketentuan
             </div>
             <div>
-                <span class="checkbox">{{#if (includes tindakanArray "Monitor Realisasinya / Perkembangannya")}}✔{{/if}}</span>
+                <span class="checkbox">{{#if (ek dengan_hormat_harap "Monitor Realisasinya / Perkembangannya")}}✔{{/if}}</span>
                 Monitor Realisasinya / Perkembangannya
             </div>
             <div>
-                <span class="checkbox">{{#if (includes tindakanArray "Siapkan Pointers / Sambutan / Bahan")}}✔{{/if}}</span>
+                <span class="checkbox">{{#if (ek dengan_hormat_harap "Siapkan Pointers / Sambutan / Bahan")}}✔{{/if}}</span>
                 Siapkan Pointers / Sambutan / Bahan
             </div>
             <div>
-                <span class="checkbox">{{#if (includes tindakanArray "Menghadap / Informasinya")}}✔{{/if}}</span>
+                <span class="checkbox">{{#if (ek dengan_hormat_harap "Menghadap / Informasinya")}}✔{{/if}}</span>
                 Menghadap / Informasinya
             </div>
             <div>
-                <span class="checkbox">{{#if (includes tindakanArray "Membaca / File / Referensi")}}✔{{/if}}</span>
+                <span class="checkbox">{{#if (ek dengan_hormat_harap "Membaca / File / Referensi")}}✔{{/if}}</span>
                 Membaca / File / Referensi
             </div>
             <div>
-                <span class="checkbox">{{#if (includes tindakanArray "Agendakan / Jadwalkan / Koordinasikan")}}✔{{/if}}</span>
+                <span class="checkbox">{{#if (ek dengan_hormat_harap "Agendakan / Jadwalkan / Koordinasikan")}}✔{{/if}}</span>
                 Agendakan / Jadwalkan / Koordinasikan
             </div>
                 </div>

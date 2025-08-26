@@ -138,6 +138,10 @@ app.post('/api/login', async (req, res) => {
       .eq('email', email)
       .single();
 
+    console.log('Login request:', req.body) // debug isi
+    console.log('User from Supabase:', user) // debug hasil query
+    console.log('User password dari Supabase:', user.password)
+
     if (error || !user) {
       return res.status(400).json({ error: 'Email atau password salah' });
     }
@@ -307,6 +311,9 @@ app.put('/api/admin/akun/:id/reset', authenticateToken, requireAdmin, async (req
 // 😁 Endpoint untuk registrasi surat masuk
 app.post('/api/admin/surat-masuk/buat', authenticateToken, upload.array('photos', 10), async (req, res) => {
   try {
+    console.log('Request body:', req.body); // ✅ Debug log
+    console.log('Files received:', req.files ? req.files.length : 0); // ✅ Debug log
+
     const {
       asal_instansi,
       tanggal_surat,
@@ -353,13 +360,17 @@ app.post('/api/admin/surat-masuk/buat', authenticateToken, upload.array('photos'
       .single();
 
     if (suratError) {
+      console.log('Supabase error:', suratError); // Debug log
       return res.status(400).json({ error: suratError.message });
     }
 
+    console.log('Surat berhasil dibuat:', suratResult); // Debug log
 
     // Upload files ke Supabase Storage
     let photoCount = 0;
     if (req.files && req.files.length > 0) {
+      // PASS USER INFO KE UPLOAD FUNCTION
+      console.log('User info:', req.user); // Debug log
       const uploadPromises = req.files.map(file =>
         uploadToSupabaseStorage(file, 'surat-masuk', req.headers.authorization?.replace('Bearer ', ''))
       );
@@ -411,6 +422,7 @@ app.post('/api/admin/surat-masuk/buat', authenticateToken, upload.array('photos'
       }
     });
   } catch (error) {
+    console.log('Server error:', error); // ✅ Debug log
     res.status(500).json({ error: error.message });
   }
 });
@@ -461,6 +473,7 @@ app.delete('/api/admin/surat-masuk/:id', async (req, res) => {
     if (error) throw error;
     res.status(200).json({ message: 'Surat berhasil dihapus' });
   } catch (error) {
+    console.error(error);
     res.status(500).json({ message: 'Gagal menghapus surat', detail: error.message });
   }
 });
@@ -468,6 +481,9 @@ app.delete('/api/admin/surat-masuk/:id', async (req, res) => {
 // 😁 Endpoint untuk admin membuat surat keluar
 app.post('/api/admin/surat-keluar/buat', authenticateToken, requireAdmin, upload.array('lampiran', 10), async (req, res) => {
   try {
+    console.log('Request body:', req.body); // ✅ Debug log
+    console.log('Files received:', req.files ? req.files.length : 0); // ✅ Debug log
+
     const {
       nama_surat,
       tanggal_surat,
@@ -510,6 +526,8 @@ app.post('/api/admin/surat-keluar/buat', authenticateToken, requireAdmin, upload
       console.log('Supabase error:', suratError); // Debug log
       return res.status(400).json({ error: suratError.message });
     }
+
+    console.log('Surat keluar berhasil dibuat:', suratResult); // Debug log
 
     // Upload lampiran ke Supabase Storage
     let lampiranCount = 0;
@@ -566,6 +584,7 @@ app.post('/api/admin/surat-keluar/buat', authenticateToken, requireAdmin, upload
       }
     });
   } catch (error) {
+    console.log('Server error:', error); // ✅ Debug log
     res.status(500).json({ error: error.message });
   }
 });
@@ -843,7 +862,6 @@ app.post('/api/kepala/disposisi/buat/:suratId', authenticateToken, async (req, r
       catatan,
       status: 'belum dibaca',
       status_dari_kabid: 'belum dibaca',
-      status_dari_sekretaris: 'belum dibaca',
       created_at: new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString(),
       created_by: req.user.id
     };
@@ -1338,7 +1356,7 @@ app.get('/api/kepala/feedback/file/:fileId', authenticateToken, async (req, res)
 
 // =======================================KABID START=========================================//
 // 📥 Endpoint untuk kabid melihat disposisi yang ditujukan kepadanya
-app.get('/api/atasan/disposisi/saya', authenticateToken, async (req, res) => {
+app.get('/api/kabid/disposisi/saya', authenticateToken, async (req, res) => {
   try {
     const userJabatan = req.user.jabatan;
 
@@ -1425,110 +1443,8 @@ app.get('/api/atasan/disposisi/saya', authenticateToken, async (req, res) => {
   }
 });
 
-app.get('/api/atasan/disposisi/:disposisiId', authenticateToken, async (req, res) => {
-  try {
-    const { disposisiId } = req.params;
-    const userJabatan = req.user.jabatan;
-
-    const { data: disposisi, error: disposisiError } = await supabase
-      .from('disposisi')
-      .select(`
-        *,
-        surat_masuk (
-          id,
-          keterangan,
-          status,
-          surat_photos (
-            id,
-            foto_original_name,
-            file_size,
-            foto_path,
-            storage_path
-          )
-        )
-      `)
-      .eq('id', disposisiId)
-      .single();
-
-    if (disposisiError || !disposisi) {
-      return res.status(404).json({ error: 'Disposisi tidak ditemukan' });
-    }
-
-    // ✅ Validasi bahwa disposisi memang ditujukan untuk user ini
-    if (disposisi.disposisi_kepada_jabatan !== userJabatan) {
-      return res.status(403).json({ error: 'Anda tidak memiliki akses ke disposisi ini' });
-    }
-
-    const { data: disposisiFiles } = await supabase
-      .from('disposisi_photos')
-      .select('*')
-      .eq('disposisi_id', disposisiId);
-
-    // ✅ Transform photos dari surat_masuk
-    const suratPhotos = disposisi.surat_masuk?.surat_photos?.map(photo => {
-      let photoUrl = `/api/atasan/surat-masuk/photo/${photo.id}`;
-
-      if (photo.foto_path && photo.foto_path.startsWith('http')) {
-        photoUrl = photo.foto_path;
-      } else if (photo.storage_path) {
-        const { data: { publicUrl } } = supabase.storage
-          .from('surat-photos')
-          .getPublicUrl(photo.storage_path);
-        photoUrl = publicUrl;
-      }
-
-      return {
-        id: photo.id,
-        filename: photo.foto_original_name,
-        size: photo.file_size,
-        url: photoUrl
-      };
-    }) || [];
-
-    const disposisiPhotos = disposisiFiles?.map(file => {
-      let fileUrl = `/api/atasan/disposisi/file/${file.id}`;
-
-      if (file.foto_path && file.foto_path.startsWith('http')) {
-        fileUrl = file.foto_path;
-      } else if (file.storage_path) {
-        const { data: { publicUrl } } = supabase.storage
-          .from('disposisi-photos')
-          .getPublicUrl(file.storage_path);
-        fileUrl = publicUrl;
-      }
-
-      return {
-        id: file.id,
-        filename: file.foto_original_name,
-        size: file.file_size,
-        url: fileUrl
-      };
-    }) || [];
-
-    res.status(200).json({
-      message: 'Detail disposisi berhasil diambil',
-      data: {
-        ...disposisi,
-        disposisi_files: disposisiPhotos,
-        disposisi_files_count: disposisiPhotos.length,
-        has_disposisi_files: disposisiPhotos.length > 0,
-        surat_masuk: {
-          ...disposisi.surat_masuk,
-          photos: suratPhotos,
-          photo_count: suratPhotos.length,
-          has_photos: suratPhotos.length > 0
-        },
-      }
-    });
-
-  } catch (error) {
-    console.error('Server error:', error);
-    res.status(500).json({ error: error.message });
-  }
-})
-
 // 📷 Endpoint untuk kabid mengakses foto/dokumen (sama dengan kepala)
-app.get('/api/atasan/surat-masuk/photo/:photoId', authenticateToken, async (req, res) => {
+app.get('/api/kabid/surat-masuk/photo/:photoId', authenticateToken, async (req, res) => {
   try {
     const { photoId } = req.params;
     console.log('kabid photo request for ID:', photoId);
@@ -1625,10 +1541,10 @@ async function validateDisposisi(id, userJabatan) {
   return disposisi;
 }
 
-async function updateDisposisiStatus(id, newStatus, newStatusKabid, newStatusSekretaris, newStatusLog, newKeterangan, userId) {
+async function updateDisposisiStatus(id, newStatus, newStatusKabid, newStatusLog, newKeterangan, userId) {
   const { data, error } = await supabase
     .from('disposisi')
-    .update({ status: newStatus, status_dari_kabid: newStatusKabid, status_dari_sekretaris: newStatusSekretaris })
+    .update({ status: newStatus, status_dari_kabid: newStatusKabid })
     .eq('id', id)
     .select()
     .single();
@@ -1667,7 +1583,6 @@ async function handleDisposisiStatusUpdate(req, res, statusConfig) {
         id,
         statusConfig.newStatus,
         statusConfig.newStatusKabid,
-        statusConfig.newStatusSekretaris,
         statusConfig.newStatusLog,
         statusConfig.newKeterangan,
         req.user.id
@@ -1707,17 +1622,6 @@ app.put('/api/kabid/disposisi/:id/baca', authenticateToken, async (req, res) => 
   });
 });
 
-app.put('/api/sekretaris/disposisi/:id/baca', authenticateToken, async (req, res) => {
-  await handleDisposisiStatusUpdate(req, res, {
-    requiredStatus: 'belum dibaca',
-    newStatus: 'dibaca',
-    newStatusSekretaris: 'dibaca',
-    newStatusLog: 'dibaca',
-    newKeterangan: 'Disposisi telah dibaca oleh sekretaris',
-    successMessage: 'Status disposisi diperbarui menjadi sudah dibaca'
-  });
-});
-
 // Endpoint untuk menerima disposisi
 app.put('/api/kabid/disposisi/:id/terima', authenticateToken, async (req, res) => {
   await handleDisposisiStatusUpdate(req, res, {
@@ -1729,91 +1633,282 @@ app.put('/api/kabid/disposisi/:id/terima', authenticateToken, async (req, res) =
   });
 });
 
-app.put('/api/sekretaris/disposisi/:id/terima', authenticateToken, async (req, res) => {
+// Endpoint untuk menandai dalam proses
+app.put('/api/kabid/disposisi/:id/proses', authenticateToken, async (req, res) => {
   await handleDisposisiStatusUpdate(req, res, {
-    requiredStatus: 'dibaca',
-    newStatusSekretaris: 'diterima',
-    newStatusLog: 'diterima',
-    newKeterangan: 'Disposisi telah diterima oleh sekretaris',
-    successMessage: 'Status disposisi diperbarui menjadi diterima oleh sekretaris'
+    requiredStatus: 'diterima oleh kabid',
+    newStatus: 'diproses',
+    newStatusKabid: 'diproses',
+    newStatusLog: 'diproses',
+    newKeterangan: 'Sedang melaksanakan proses',
+    successMessage: 'Status disposisi diperbarui menjadi dalam proses'
+  });
+});
+
+// Endpoint untuk menandai selesai
+app.put('/api/kabid/disposisi/:id/selesai', authenticateToken, async (req, res) => {
+  await handleDisposisiStatusUpdate(req, res, {
+    requiredStatus: 'diproses',
+    newStatus: 'selesai',
+    newStatusKabid: 'selesai',
+    newStatusLog: 'selesai',
+    newKeterangan: 'Tugas disposisi telah selesai',
+    successMessage: 'Status disposisi diperbarui menjadi selesai'
   });
 });
 
 // Endpoint untuk kabid memberikan feedback ke kepala (dengan update status)
-
-
-// 📋 Endpoint untuk kabid melihat feedback yang sudah dikirim
-// Helper function untuk transformasi data
-const transformFeedbackData = (feedback) => {
-  return feedback?.map(item => {
-    const files = item.feedback_files?.map(file => ({
-      id: file.id,
-      filename: file.file_original_name,
-      size: file.file_size,
-      type: file.file_type,
-      url: generateFileUrl(file)
-    })) || [];
-
-    return {
-      ...item,
-      files,
-      file_count: files.length,
-      has_files: files.length > 0
-    };
-  }) || [];
-};
-
-// Helper function untuk generate URL file
-const generateFileUrl = (file) => {
-  // Jika sudah URL lengkap, gunakan langsung
-  if (file.file_path?.startsWith('http')) {
-    return file.file_path;
-  }
-
-  // Jika ada storage_path, generate public URL
-  if (file.storage_path) {
-    const { data: { publicUrl } } = supabase.storage
-      .from('surat-photos')
-      .getPublicUrl(file.storage_path);
-    return publicUrl;
-  }
-
-  // Fallback ke endpoint API
-  return `/api/feedback/file/${file.id}`;
-};
-
-// Unified endpoint untuk feedback
-
-
-// Simplified file access endpoint
-app.get('/api/feedback/file/:fileId', authenticateToken, async (req, res) => {
+app.post('/api/kabid/disposisi/:disposisiId/feedback', authenticateToken, upload.array('feedback_files', 5), async (req, res) => {
   try {
-    const { fileId } = req.params;
-    const userId = req.user.id;
+    const { disposisiId } = req.params;
+    const { notes, status, status_dari_kabid } = req.body; // Tambahkan status dari request body
+    const userJabatan = req.user.jabatan;
 
-    // Get file with ownership check
-    const { data: file, error } = await supabase
-      .from('feedback_files')
-      .select(`
-        *,
-        feedback_disposisi!inner (user_id)
-      `)
-      .eq('id', fileId)
-      .eq('feedback_disposisi.user_id', userId)
+    console.log('Feedback request:', { disposisiId, notes, status, status_dari_kabid, filesCount: req.files?.length });
+
+    // Validasi input
+    if (!notes || notes.trim() === '') {
+      return res.status(400).json({
+        error: 'Notes/catatan feedback wajib diisi'
+      });
+    }
+
+    if (!status || !['diproses', 'selesai'].includes(status)) {
+      return res.status(400).json({
+        error: 'Status disposisi wajib dipilih dan harus berupa "diproses" atau "selesai"'
+      });
+    }
+    if (!status_dari_kabid || !['diproses', 'selesai'].includes(status_dari_kabid)) {
+      return res.status(400).json({
+        error: 'Status disposisi wajib dipilih dan harus berupa "diproses" atau "selesai"'
+      });
+    }
+
+    // Pastikan disposisi ada dan ditujukan ke jabatan user
+    const { data: disposisi, error: disposisiError } = await supabase
+      .from('disposisi')
+      .select('id, disposisi_kepada_jabatan, perihal, created_by, surat_masuk_id, status, status_dari_kabid')
+      .eq('id', disposisiId)
+      .eq('disposisi_kepada_jabatan', userJabatan)
       .single();
 
-    if (error || !file) {
-      return res.status(404).json({ error: 'File tidak ditemukan' });
+    if (disposisiError || !disposisi) {
+      return res.status(404).json({
+        error: 'Disposisi tidak ditemukan atau tidak ditujukan untuk jabatan Anda'
+      });
     }
 
-    // Generate URL dan redirect
-    const fileUrl = generateFileUrl(file);
+    // Cek apakah feedback sudah ada sebelumnya
+    const { data: existingFeedback, error: checkError } = await supabase
+      .from('feedback_disposisi')
+      .select('id')
+      .eq('disposisi_id', disposisiId)
+      .single();
 
-    if (fileUrl.startsWith('http')) {
-      return res.redirect(fileUrl);
+    if (existingFeedback) {
+      return res.status(400).json({
+        error: 'Feedback untuk disposisi ini sudah dikirim sebelumnya'
+      });
     }
 
-    return res.status(404).json({ error: 'File tidak dapat diakses' });
+    // Data feedback
+    const feedbackData = {
+      disposisi_id: disposisiId,
+      surat_masuk_id: disposisi.surat_masuk_id,
+      user_id: req.user.id,
+      user_jabatan: userJabatan,
+      notes: notes.trim(),
+      created_at: new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString()
+    };
+
+    // Insert feedback
+    const { data: feedbackResult, error: feedbackError } = await supabase
+      .from('feedback_disposisi')
+      .insert([feedbackData])
+      .select()
+      .single();
+
+    if (feedbackError) {
+      console.error('Error creating feedback:', feedbackError);
+      return res.status(400).json({ error: feedbackError.message });
+    }
+
+    console.log('Feedback berhasil dibuat:', feedbackResult);
+
+    // Upload files jika ada
+    let fileCount = 0;
+    if (req.files && req.files.length > 0) {
+      const uploadPromises = req.files.map(file =>
+        uploadToSupabaseStorage(file, 'feedback-disposisi', req.headers.authorization?.replace('Bearer ', ''))
+      );
+
+      try {
+        const uploadResults = await Promise.all(uploadPromises);
+
+        // Simpan data file ke database
+        const fileData = uploadResults.map(result => ({
+          feedback_id: feedbackResult.id,
+          disposisi_id: disposisiId,
+          file_path: result.publicUrl,
+          file_filename: result.fileName,
+          file_original_name: result.originalName,
+          file_size: result.size,
+          file_type: result.mimetype,
+          storage_path: result.fileName,
+          created_at: new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString()
+        }));
+
+        const { error: fileError } = await supabase
+          .from('feedback_files')
+          .insert(fileData);
+
+        if (fileError) {
+          // Rollback: hapus feedback dan files dari storage
+          await supabase.from('feedback_disposisi').delete().eq('id', feedbackResult.id);
+
+          // Hapus files dari Supabase Storage
+          const filesToDelete = uploadResults.map(r => r.fileName);
+          await supabase.storage.from('surat-photos').remove(filesToDelete);
+
+          return res.status(400).json({ error: 'Gagal menyimpan file: ' + fileError.message });
+        }
+
+        fileCount = req.files.length;
+        console.log(`${fileCount} files uploaded successfully`);
+      } catch (uploadError) {
+        console.error('Upload error:', uploadError);
+        // Rollback feedback jika upload gagal
+        await supabase.from('feedback_disposisi').delete().eq('id', feedbackResult.id);
+        return res.status(400).json({ error: 'Gagal upload file: ' + uploadError.message });
+      }
+    }
+
+    // Update status disposisi dan has_feedback
+    const { error: updateError } = await supabase
+      .from('disposisi')
+      .update(
+        {
+          has_feedback: true,
+          status: status,
+          status_dari_kabid: status_dari_kabid
+        }
+      )
+      .eq('id', disposisiId);
+
+    if (updateError) {
+      console.error('Error updating disposisi status:', updateError);
+      return res.status(500).json({ error: 'Gagal memperbarui status disposisi' });
+    }
+
+    console.log('Status disposisi diupdate menjadi:', status);
+
+    // 🔧 TAMBAHAN: Insert ke disposisi_status_log
+    const statusLogData = {
+      disposisi_id: disposisiId,
+      status: status, // status yang dikirimkan adalah 'diproses' atau 'selesai'
+      oleh_user_id: req.user.id,
+      keterangan: `Disposisi ${status} melalui feedback oleh ${userJabatan}`
+    };
+
+    const { error: logError } = await supabase
+      .from('disposisi_status_log')
+      .insert([statusLogData]);
+
+    if (logError) {
+      console.error('Error creating status log:', logError);
+      // Tidak throw error karena feedback sudah berhasil dibuat
+    }
+
+    res.status(201).json({
+      message: `Feedback berhasil dikirim dan status disposisi diupdate menjadi "${status}"`,
+      data: {
+        ...feedbackResult,
+        status_disposisi: status,
+        file_count: fileCount,
+        has_files: fileCount > 0
+      }
+    });
+
+  } catch (error) {
+    console.error('Server error in feedback creation:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 📋 Endpoint untuk kabid melihat feedback yang sudah dikirim
+app.get('/api/kabid/feedback/saya', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const userJabatan = req.user.jabatan;
+
+    const { data: feedback, error } = await supabase
+      .from('feedback_disposisi')
+      .select(`
+        *,
+        disposisi (
+          id,
+          perihal,
+          sifat,
+          dengan_hormat_harap,
+          status,
+          status_dari_kabid,
+          created_at
+        ),
+        feedback_files (
+          id,
+          file_original_name,
+          file_size,
+          file_type,
+          file_path,
+          storage_path
+        )
+      `)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching kabid feedback:', error);
+      return res.status(400).json({ error: error.message });
+    }
+
+    // Transform data dengan file info
+    const transformedData = feedback?.map(item => {
+      const files = item.feedback_files?.map(file => {
+        let fileUrl = `/api/kabid/feedback/file/${file.id}`;
+
+        // Jika file_path sudah berupa URL lengkap, gunakan langsung
+        if (file.file_path && file.file_path.startsWith('http')) {
+          fileUrl = file.file_path;
+        } else if (file.storage_path) {
+          // Generate public URL dari Supabase
+          const { data: { publicUrl } } = supabase.storage
+            .from('surat-photos')
+            .getPublicUrl(file.storage_path);
+          fileUrl = publicUrl;
+        }
+
+        return {
+          id: file.id,
+          filename: file.file_original_name,
+          size: file.file_size,
+          type: file.file_type,
+          url: fileUrl
+        };
+      }) || [];
+
+      return {
+        ...item,
+        files,
+        file_count: files.length,
+        has_files: files.length > 0
+      };
+    }) || [];
+
+    res.json({
+      message: 'Berhasil mengambil feedback kabid',
+      data: transformedData,
+      total: transformedData.length
+    });
 
   } catch (error) {
     console.error('Server error:', error);
@@ -1821,11 +1916,396 @@ app.get('/api/feedback/file/:fileId', authenticateToken, async (req, res) => {
   }
 });
 
-// ✏️ Endpoint untuk kabid mendapatkan detail feedback yang akan diedit
+// 📁 Endpoint untuk kabid mengakses file feedback
+app.get('/api/kabid/feedback/file/:fileId', authenticateToken, async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    const userId = req.user.id;
 
+    console.log('Feedback file request for ID:', fileId);
+
+    // Pastikan file milik user yang request
+    const { data: file, error } = await supabase
+      .from('feedback_files')
+      .select(`
+        *,
+        feedback_disposisi!inner (
+          user_id
+        )
+      `)
+      .eq('id', fileId)
+      .eq('feedback_disposisi.user_id', userId)
+      .single();
+
+    if (error) {
+      console.error('Database error:', error);
+      return res.status(404).json({ error: 'File tidak ditemukan: ' + error.message });
+    }
+
+    if (!file) {
+      return res.status(404).json({ error: 'File tidak ditemukan atau tidak ada akses' });
+    }
+
+    console.log('File data from DB:', file);
+
+    // Prioritas 1: Jika file_path sudah berupa URL lengkap, redirect langsung
+    if (file.file_path && file.file_path.startsWith('http')) {
+      console.log('Redirecting to existing URL:', file.file_path);
+      return res.redirect(file.file_path);
+    }
+
+    // Prioritas 2: Generate public URL dari storage_path
+    if (file.storage_path) {
+      try {
+        const { data: { publicUrl }, error: urlError } = supabase.storage
+          .from('surat-photos')
+          .getPublicUrl(file.storage_path);
+
+        if (urlError) {
+          console.error('Error generating public URL:', urlError);
+        } else {
+          console.log('Generated public URL:', publicUrl);
+          return res.redirect(publicUrl);
+        }
+      } catch (urlGenError) {
+        console.error('Error in URL generation:', urlGenError);
+      }
+    }
+
+    // Jika semua gagal
+    console.error('All methods failed. File data:', file);
+    return res.status(404).json({
+      error: 'File tidak dapat diakses',
+      debug: {
+        fileId,
+        file_path: file.file_path,
+        storage_path: file.storage_path
+      }
+    });
+
+  } catch (error) {
+    console.error('Server error in feedback file endpoint:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ✏️ Endpoint untuk kabid mendapatkan detail feedback yang akan diedit
+app.get('/api/kabid/feedback/:feedbackId/edit', authenticateToken, async (req, res) => {
+  try {
+    const { feedbackId } = req.params;
+    const userId = req.user.id;
+    const userJabatan = req.user.jabatan;
+
+    // Ambil detail feedback dengan validasi kepemilikan
+    const { data: feedback, error } = await supabase
+      .from('feedback_disposisi')
+      .select(`
+        *,
+        disposisi (
+          id,
+          perihal,
+          sifat,
+          disposisi_kepada_jabatan,
+          dengan_hormat_harap,
+          created_at,
+          status,
+          status_dari_kabid,
+          surat_masuk (
+            id,
+            keterangan
+          )
+        ),
+        feedback_files (
+          id,
+          file_original_name,
+          file_size,
+          file_type,
+          file_path,
+          storage_path
+        )
+      `)
+      .eq('id', feedbackId)
+      .eq('user_id', userId)
+      .eq('user_jabatan', userJabatan)
+      .single();
+
+    if (error || !feedback) {
+      return res.status(404).json({
+        error: 'Feedback tidak ditemukan atau tidak ada akses untuk mengedit'
+      });
+    }
+
+    // Transform file data
+    const files = feedback.feedback_files?.map(file => {
+      let fileUrl = `/api/kabid/feedback/file/${file.id}`;
+
+      if (file.file_path && file.file_path.startsWith('http')) {
+        fileUrl = file.file_path;
+      } else if (file.storage_path) {
+        const { data: { publicUrl } } = supabase.storage
+          .from('surat-photos')
+          .getPublicUrl(file.storage_path);
+        fileUrl = publicUrl;
+      }
+
+      return {
+        id: file.id,
+        filename: file.file_original_name,
+        size: file.file_size,
+        type: file.file_type,
+        url: fileUrl
+      };
+    }) || [];
+
+    const responseData = {
+      ...feedback,
+      files,
+      file_count: files.length,
+      has_files: files.length > 0
+    };
+
+    res.json({
+      message: 'Berhasil mengambil detail feedback untuk edit',
+      data: responseData
+    });
+
+  } catch (error) {
+    console.error('Server error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ✏️ Endpoint untuk kabid mengedit feedback
+app.put('/api/kabid/feedback/:feedbackId', authenticateToken, upload.array('new_feedback_files', 5), async (req, res) => {
+  try {
+    const { feedbackId } = req.params;
+    const { notes, status, status_dari_kabid, remove_file_ids } = req.body;
+    const userId = req.user.id;
+    const userJabatan = req.user.jabatan;
+
+    console.log('Edit feedback request:', {
+      feedbackId,
+      notes,
+      status,
+      status_dari_kabid,
+      newFilesCount: req.files?.length,
+      removeFileIds: remove_file_ids
+    });
+
+    // Validasi input - sama seperti di create feedback
+    if (!notes || notes.trim() === '') {
+      return res.status(400).json({
+        error: 'Notes/catatan feedback wajib diisi'
+      });
+    }
+
+    if (!status || !['diproses', 'selesai'].includes(status)) {
+      return res.status(400).json({
+        error: 'Status disposisi wajib dipilih dan harus berupa "diproses" atau "selesai"'
+      });
+    }
+
+    // Pastikan feedback ada dan milik user
+    const { data: existingFeedback, error: feedbackError } = await supabase
+      .from('feedback_disposisi')
+      .select(`
+        *,
+        disposisi (
+          id,
+          perihal,
+          created_by,
+          surat_masuk_id,
+          disposisi_kepada_jabatan,
+          status,
+          status_dari_kabid
+        )
+      `)
+      .eq('id', feedbackId)
+      .eq('user_id', userId)
+      .eq('user_jabatan', userJabatan)
+      .single();
+
+    if (feedbackError || !existingFeedback) {
+      return res.status(404).json({
+        error: 'Feedback tidak ditemukan atau tidak ada akses untuk mengedit'
+      });
+    }
+
+    // Update data feedback
+    const updateData = {
+      notes: notes.trim(),
+      updated_at: new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString()
+    };
+
+    const { data: updatedFeedback, error: updateError } = await supabase
+      .from('feedback_disposisi')
+      .update(updateData)
+      .eq('id', feedbackId)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error('Error updating feedback:', updateError);
+      return res.status(400).json({ error: updateError.message });
+    }
+
+    console.log('Feedback berhasil diupdate:', updatedFeedback);
+
+    // Handle penghapusan file lama jika ada
+    let removedFileCount = 0;
+    if (remove_file_ids) {
+      try {
+        const removeIds = Array.isArray(remove_file_ids) ? remove_file_ids : [remove_file_ids];
+
+        // Ambil data file yang akan dihapus untuk mendapatkan storage_path
+        const { data: filesToRemove, error: fetchError } = await supabase
+          .from('feedback_files')
+          .select('id, storage_path')
+          .eq('feedback_id', feedbackId)
+          .in('id', removeIds);
+
+        if (!fetchError && filesToRemove && filesToRemove.length > 0) {
+          // Hapus dari storage
+          const storageFilesToDelete = filesToRemove
+            .filter(file => file.storage_path)
+            .map(file => file.storage_path);
+
+          if (storageFilesToDelete.length > 0) {
+            const { error: storageError } = await supabase.storage
+              .from('surat-photos')
+              .remove(storageFilesToDelete);
+
+            if (storageError) {
+              console.error('Error removing files from storage:', storageError);
+            }
+          }
+
+          // Hapus dari database
+          const { error: removeError } = await supabase
+            .from('feedback_files')
+            .delete()
+            .eq('feedback_id', feedbackId)
+            .in('id', removeIds);
+
+          if (removeError) {
+            console.error('Error removing files from database:', removeError);
+          } else {
+            removedFileCount = filesToRemove.length;
+            console.log(`${removedFileCount} files removed successfully`);
+          }
+        }
+      } catch (removeError) {
+        console.error('Error in file removal process:', removeError);
+      }
+    }
+
+    // Upload file baru jika ada - sama seperti di create feedback
+    let newFileCount = 0;
+    if (req.files && req.files.length > 0) {
+      const uploadPromises = req.files.map(file =>
+        uploadToSupabaseStorage(file, 'feedback-disposisi', req.headers.authorization?.replace('Bearer ', ''))
+      );
+
+      try {
+        const uploadResults = await Promise.all(uploadPromises);
+
+        // Simpan data file baru ke database
+        const fileData = uploadResults.map(result => ({
+          feedback_id: feedbackId,
+          disposisi_id: existingFeedback.disposisi_id,
+          file_path: result.publicUrl,
+          file_filename: result.fileName,
+          file_original_name: result.originalName,
+          file_size: result.size,
+          file_type: result.mimetype,
+          storage_path: result.fileName,
+          created_at: new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString()
+        }));
+
+        const { error: fileError } = await supabase
+          .from('feedback_files')
+          .insert(fileData);
+
+        if (fileError) {
+          console.error('Error saving new files:', fileError);
+          // Rollback: hapus files dari storage
+          const filesToDelete = uploadResults.map(r => r.fileName);
+          await supabase.storage.from('surat-photos').remove(filesToDelete);
+
+          return res.status(400).json({ error: 'Gagal menyimpan file baru: ' + fileError.message });
+        }
+
+        newFileCount = req.files.length;
+        console.log(`${newFileCount} new files uploaded successfully`);
+      } catch (uploadError) {
+        console.error('Upload error:', uploadError);
+        return res.status(400).json({ error: 'Gagal upload file baru: ' + uploadError.message });
+      }
+    }
+
+    // Update status disposisi - sama seperti di create feedback
+    const { error: updateDisposisiError } = await supabase
+      .from('disposisi')
+      .update({
+        status: status,
+        status_dari_kabid: status // Update status sesuai pilihan user
+      })
+      .eq('id', existingFeedback.disposisi_id);
+
+    if (updateDisposisiError) {
+      console.error('Error updating disposisi status:', updateDisposisiError);
+      return res.status(500).json({ error: 'Gagal memperbarui status disposisi' });
+    }
+
+    console.log('Status disposisi diupdate menjadi:', status);
+
+    // 🔧 TAMBAHAN: Insert ke disposisi_status_log
+    const statusLogData = {
+      disposisi_id: existingFeedback.disposisi_id,
+      status: status, // status yang dikirimkan ('diproses' atau 'selesai')
+      oleh_user_id: userId,
+      keterangan: `Disposisi ${status} melalui update feedback oleh ${userJabatan}`
+    };
+
+    const { error: logError } = await supabase
+      .from('disposisi_status_log')
+      .insert([statusLogData]);
+
+    if (logError) {
+      console.error('Error creating status log:', logError);
+      // Tidak throw error karena update feedback sudah berhasil
+    }
+
+    // Hitung total file setelah update
+    const { data: remainingFiles, error: countError } = await supabase
+      .from('feedback_files')
+      .select('id')
+      .eq('feedback_id', feedbackId);
+
+    const totalFiles = remainingFiles ? remainingFiles.length : 0;
+
+    res.json({
+      message: `Feedback berhasil diperbarui dan status disposisi diupdate menjadi "${status}"`,
+      data: {
+        ...updatedFeedback,
+        status_disposisi: status,
+        file_count: totalFiles,
+        has_files: totalFiles > 0,
+        changes: {
+          removed_files: removedFileCount,
+          added_files: newFileCount
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Server error in feedback update:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // 🗑️ Endpoint untuk kabid menghapus file feedback secara individual
-app.delete('/api/feedback/file/:fileId', authenticateToken, async (req, res) => {
+app.delete('/api/kabid/feedback/file/:fileId', authenticateToken, async (req, res) => {
   try {
     const { fileId } = req.params;
     const userId = req.user.id;
@@ -1891,11 +2371,102 @@ app.delete('/api/feedback/file/:fileId', authenticateToken, async (req, res) => 
 });
 
 //Endpoint untuk kabid meneruskan disposisi kebawahan / staff
+app.post('/api/kabid/disposisi/teruskan/:disposisiId', authenticateToken, async (req, res) => {
+  try {
+    const { disposisiId } = req.params;
+    const { diteruskan_kepada_user_id, catatan_kabid } = req.body;
 
+    // ✅ Role check
+    if (req.user.role !== 'user') {
+      return res.status(403).json({ error: 'Hanya Kabid yang bisa meneruskan disposisi' });
+    }
+
+    if (!diteruskan_kepada_user_id) {
+      return res.status(400).json({ error: 'Penerima disposisi wajib dipilih' });
+    }
+
+    // Ambil disposisi yang akan diteruskan
+    const { data: disposisiAwal, error: disposisiError } = await supabase
+      .from('disposisi')
+      .select('*')
+      .eq('id', disposisiId)
+      .single();
+
+    if (disposisiError || !disposisiAwal) {
+      return res.status(404).json({ error: 'Disposisi tidak ditemukan' });
+    }
+
+    // Pastikan disposisi ditujukan ke kabid ini
+    if (disposisiAwal.disposisi_kepada_jabatan !== req.user.jabatan) {
+      return res.status(403).json({ error: 'Disposisi ini bukan untuk Anda' });
+    }
+
+    // Cek penerima di bidang yang sama
+    const { data: penerima, error: penerimaError } = await supabase
+      .from('users')
+      .select('id, name, bidang, jabatan')
+      .eq('id', diteruskan_kepada_user_id)
+      .single();
+
+    if (penerimaError || !penerima) {
+      return res.status(404).json({ error: 'User penerima tidak ditemukan' });
+    }
+
+    if (penerima.bidang !== req.user.bidang) {
+      return res.status(403).json({ error: 'Hanya bisa meneruskan ke user di bidang yang sama' });
+    }
+
+    // 🔥 Update disposisi dengan penerima baru dan tambahkan catatan kabid
+    const updateData = {
+      diteruskan_kepada_user_id,
+      diteruskan_kepada_jabatan: penerima.jabatan,
+      diteruskan_kepada_nama: penerima.name,
+      catatan_kabid,
+      status_dari_kabid: 'diteruskan',
+      status_dari_bawahan: 'belum dibaca',
+      updated_at: new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString()
+    };
+
+    const { data: updatedDisposisi, error: updateError } = await supabase
+      .from('disposisi')
+      .update(updateData)
+      .eq('id', disposisiId)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error('Error updating disposisi:', updateError);
+      return res.status(400).json({ error: updateError.message });
+    }
+
+    // 🔥 Tambahkan log status
+    await supabase
+      .from('disposisi_status_log')
+      .insert({
+        disposisi_id: disposisiId,
+        status: 'diteruskan',
+        oleh_user_id: req.user.id,
+        ke_user_id: diteruskan_kepada_user_id,
+        keterangan: `Disposisi diteruskan dari ${req.user.jabatan} ke ${penerima.name}`
+      });
+
+    res.status(200).json({
+      message: 'Disposisi berhasil diteruskan',
+      data: {
+        ...updatedDisposisi,
+        disposisi_sebelumnya: disposisiAwal
+      }
+    });
+
+  } catch (error) {
+    console.error('Server error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 
 // GET /api/kabid/bawahan
-app.get('/api/bawahan', authenticateToken, async (req, res) => {
+app.get('/api/kabid/bawahan', authenticateToken, async (req, res) => {
   try {
     // Ambil user di bidang yang sama, kecuali diri sendiri
     const { data: bawahan, error } = await supabase
@@ -1920,6 +2491,123 @@ app.get('/api/bawahan', authenticateToken, async (req, res) => {
   }
 });
 
+// GET /api/kabid/disposisi/:disposisiId/feedback-bawahan
+app.get('/api/kabid/disposisi/:disposisiId/feedback-bawahan', authenticateToken, async (req, res) => {
+  try {
+    const { disposisiId } = req.params;
+
+    // ✅ Role check - hanya untuk Kabid
+    if (req.user.role !== 'user') { // Sesuaikan dengan role Kabid Anda
+      return res.status(403).json({ error: 'Hanya Kabid yang bisa mengakses feedback bawahan' });
+    }
+
+    // Ambil disposisi untuk mendapatkan diteruskan_kepada_user_id
+    const { data: disposisi, error: disposisiError } = await supabase
+      .from('disposisi')
+      .select('id, diteruskan_kepada_user_id, diteruskan_kepada_jabatan, diteruskan_kepada_nama, status, status_dari_bawahan')
+      .eq('id', disposisiId)
+      .single();
+
+    if (disposisiError || !disposisi) {
+      return res.status(404).json({ error: 'Disposisi tidak ditemukan' });
+    }
+
+
+
+    // Pastikan disposisi ini diteruskan ke seseorang (bukan null)
+    if (!disposisi.diteruskan_kepada_user_id) {
+       // Opsional: return empty jika belum ada penerima
+       return res.status(404).json({ error: 'Disposisi belum diteruskan ke bawahan' }); 
+    }
+
+    // Ambil feedback dari bawahan (user_id = diteruskan_kepada_user_id)
+    const { data: feedback, error: feedbackError } = await supabase
+      .from('feedback_disposisi')
+      .select(`
+        *,
+        disposisi (
+          id,
+          perihal,
+          sifat,
+          diteruskan_kepada_jabatan,
+          dengan_hormat_harap,
+          nomor_surat,
+          asal_instansi,
+          tanggal_surat,
+          diterima_tanggal,
+          nomor_agenda,
+          created_by,
+          status
+        ),
+        surat_masuk (
+          id,
+          nomor_surat,
+          asal_instansi,
+          tanggal_surat,
+          keterangan,
+          diterima_tanggal,
+          nomor_agenda
+        ),
+        feedback_files (
+          id,
+          file_original_name,
+          file_size,
+          file_type,
+          file_path,
+          storage_path
+        )
+      `)
+      .eq('disposisi_id', disposisiId)
+      .eq('user_id', disposisi.diteruskan_kepada_user_id) // Filter berdasarkan user bawahan
+      .single(); // Karena diasumsikan hanya satu feedback per disposisi per user
+
+    if (feedbackError) {
+      console.error('Error fetching bawahan feedback:', feedbackError);
+      // Jika tidak ditemukan, kirim 404
+      if (feedbackError.code === 'PGRST116') { // Kode untuk single() not found
+         return res.status(404).json({ error: 'Feedback dari bawahan belum diterima' });
+      }
+      return res.status(500).json({ error: feedbackError.message });
+    }
+
+    if (!feedback) {
+      return res.status(404).json({ error: 'Feedback dari bawahan belum diterima' });
+    }
+
+    const files = feedback.feedback_files?.map(file => {
+      let fileUrl = `/api/feedback/file/${file.id}`;
+
+      if (file.file_path && file.file_path.startsWith('http')) {
+        fileUrl = file.file_path;
+      } else if (file.storage_path) {
+        const { data: { publicUrl } } = supabase.storage
+          .from('surat-photos')
+          .getPublicUrl(file.storage_path);
+        fileUrl = publicUrl;
+      }
+
+      return {
+        id: file.id,
+        filename: file.file_original_name,
+        size: file.file_size,
+        type: file.file_type,
+        url: fileUrl
+      };
+    }) || [];
+
+    res.json({
+      ...feedback,
+      files,
+      file_count: files.length,
+      has_files: files.length > 0
+    });
+
+  } catch (error) {
+    console.error('Server error in fetching bawahan feedback:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // =======================================KABID END=========================================//
 
 // =======================================STAFF START=========================================//
@@ -1930,7 +2618,6 @@ app.post('/api/bawahan/disposisi/:disposisiId/feedback', authenticateToken, uplo
     const { notes, status, status_dari_bawahan } = req.body;
     const userId = req.user.id;
     const userJabatan = req.user.jabatan;
-    const userName = req.user.name;
 
     console.log('Bawahan feedback request:', { disposisiId, notes, status, status_dari_bawahan, filesCount: req.files?.length });
 
@@ -1987,7 +2674,6 @@ app.post('/api/bawahan/disposisi/:disposisiId/feedback', authenticateToken, uplo
       surat_masuk_id: disposisi.surat_masuk_id,
       user_id: userId,
       user_jabatan: userJabatan,
-      user_name: userName,
       notes: notes.trim(),
       created_at: new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString()
     };
@@ -2119,7 +2805,7 @@ app.get('/api/bawahan/feedback/saya', authenticateToken, async (req, res) => {
           dengan_hormat_harap,
           status,
           status_dari_bawahan,
-          catatan_atasan,
+          catatan_kabid,
           created_at
         ),
         feedback_files (
@@ -2247,7 +2933,7 @@ app.get('/api/bawahan/feedback/:feedbackId/edit', authenticateToken, async (req,
           created_at,
           status,
           status_dari_bawahan,
-          catatan_atasan,
+          catatan_kabid,
           surat_masuk (
             id,
             keterangan
@@ -2953,19 +3639,19 @@ app.get('/api/kepala/statistik/disposisi', authenticateToken, async (req, res) =
     // 📈 Statistik Status Utama - Diperbaiki dengan normalisasi status
     const statusStats = {
       total: disposisi.length,
-      belum_dibaca: disposisi.filter(d =>
+      belum_dibaca: disposisi.filter(d => 
         d.status === 'belum dibaca' || d.status === 'belum_dibaca'
       ).length,
-      sudah_dibaca: disposisi.filter(d =>
+      sudah_dibaca: disposisi.filter(d => 
         d.status === 'sudah dibaca' || d.status === 'sudah_dibaca' || d.status === 'dibaca'
       ).length,
-      diproses: disposisi.filter(d =>
+      diproses: disposisi.filter(d => 
         d.status === 'diproses' || d.status === 'sedang diproses'
       ).length,
-      selesai: disposisi.filter(d =>
+      selesai: disposisi.filter(d => 
         d.status === 'selesai' || d.status === 'completed'
       ).length,
-      diteruskan: disposisi.filter(d =>
+      diteruskan: disposisi.filter(d => 
         d.status === 'diteruskan' || d.status === 'forwarded'
       ).length
     };
@@ -2980,8 +3666,8 @@ app.get('/api/kepala/statistik/disposisi', authenticateToken, async (req, res) =
     };
 
     // 📋 Validasi total (opsional - untuk debugging)
-    const totalCalculated = statusStats.belum_dibaca + statusStats.sudah_dibaca +
-      statusStats.diproses + statusStats.selesai + statusStats.diteruskan;
+    const totalCalculated = statusStats.belum_dibaca + statusStats.sudah_dibaca + 
+                           statusStats.diproses + statusStats.selesai + statusStats.diteruskan;
 
     // 🗓️ Statistik berdasarkan periode waktu (opsional)
     const now = new Date();
@@ -3013,996 +3699,105 @@ app.get('/api/kepala/statistik/disposisi', authenticateToken, async (req, res) =
 
   } catch (error) {
     console.error('Error in disposisi statistics:', error);
-    res.status(500).json({
+    res.status(500).json({ 
       success: false,
       error: 'Internal server error',
-      message: error.message
+      message: error.message 
     });
   }
 });
 
-app.get('/api/leaderboard/:tipe', authenticateToken, async (req, res) => {
-  try {
-    const { tipe } = req.params;
-    let selectField;
-    let fieldName;
 
-    if (tipe === 'atasan') {
-      selectField = 'disposisi_kepada_jabatan';
-      fieldName = 'jabatan';
-    } else if (tipe === 'bawahan') {
-      selectField = 'diteruskan_kepada_nama';
-      fieldName = 'name';
-    } else {
-      return res.status(400).json({ 
-        error: 'Tipe leaderboard tidak valid. Gunakan "atasan" atau "bawahan"' 
-      });
-    }
 
-    // Ambil data disposisi
-    const { data: disposisiData, error: disposisiError } = await supabase
-      .from('disposisi')
-      .select('disposisi_kepada_jabatan, diteruskan_kepada_nama');
 
-    if (disposisiError) {
-      console.error(`Error fetching disposisi data:`, disposisiError);
-      return res.status(400).json({ error: disposisiError.message });
-    }
-
-    // Ambil data users untuk mapping bidang
-    const { data: usersData, error: usersError } = await supabase
-      .from('users')
-      .select('name, jabatan, bidang');
-
-    if (usersError) {
-      console.error(`Error fetching users data:`, usersError);
-      return res.status(400).json({ error: usersError.message });
-    }
-
-    // Buat mapping dari nama/jabatan ke bidang
-    const usersBidangMap = {};
-    usersData.forEach(user => {
-      if (user.name) {
-        usersBidangMap[user.name] = user.bidang;
-      }
-      if (user.jabatan) {
-        usersBidangMap[user.jabatan] = user.bidang;
-      }
-    });
-
-    let result;
-
-    if (tipe === 'atasan') {
-      // Hitung total disposisi yang diterima setiap atasan
-      const disposisiCounts = disposisiData.reduce((acc, curr) => {
-        const key = curr.disposisi_kepada_jabatan;
-        if (key) {
-          const bidang = usersBidangMap[key] || 'Tidak diketahui';
-          const compositeKey = `${key}|${bidang}`;
-          acc[compositeKey] = (acc[compositeKey] || 0) + 1;
-        }
-        return acc;
-      }, {});
-
-      // Hitung disposisi yang diteruskan oleh setiap kabid
-      const diteruskanCounts = disposisiData.reduce((acc, curr) => {
-        const key = curr.disposisi_kepada_jabatan;
-        if (key && curr.diteruskan_kepada_nama !== null) {
-          const bidang = usersBidangMap[key] || 'Tidak diketahui';
-          const compositeKey = `${key}|${bidang}`;
-          acc[compositeKey] = (acc[compositeKey] || 0) + 1;
-        }
-        return acc;
-      }, {});
-
-      // Kalkulasi: diterima - diteruskan untuk setiap kabid
-      result = Object.entries(disposisiCounts)
-        .map(([compositeKey, count]) => {
-          const [jabatan, bidang] = compositeKey.split('|');
-          return {
-            [fieldName]: jabatan,
-            bidang: bidang,
-            jumlah_disposisi: count - (diteruskanCounts[compositeKey] || 0)
-          };
-        })
-        .sort((a, b) => b.jumlah_disposisi - a.jumlah_disposisi);
-
-    } else {
-      // Untuk bawahan: hitung diteruskan_kepada_nama
-      const diteruskanCounts = disposisiData.reduce((acc, curr) => {
-        const key = curr.diteruskan_kepada_nama;
-        if (key) {
-          const bidang = usersBidangMap[key] || 'Tidak diketahui';
-          const compositeKey = `${key}|${bidang}`;
-          acc[compositeKey] = (acc[compositeKey] || 0) + 1;
-        }
-        return acc;
-      }, {});
-
-      result = Object.entries(diteruskanCounts)
-        .map(([compositeKey, count]) => {
-          const [name, bidang] = compositeKey.split('|');
-          return {
-            [fieldName]: name,
-            bidang: bidang,
-            jumlah_disposisi: count
-          };
-        })
-        .sort((a, b) => b.jumlah_disposisi - a.jumlah_disposisi);
-    }
-
-    res.status(200).json(result);
-  } catch (error) {
-    console.error('Server error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-
-app.get('/api/:role/feedback/saya', authenticateToken, async (req, res) => {
-  try {
-    const { role } = req.params;
-    const userId = req.user.id;
-
-    // Validasi role
-    if (!['user', 'sekretaris'].includes(role)) {
-      return res.status(400).json({ error: 'Role tidak valid' });
-    }
-
-    const statusField = role === 'user' ? 'status_dari_kabid' : 'status_dari_sekretaris';
-
-    const { data: feedback, error } = await supabase
-      .from('feedback_disposisi')
-      .select(`
-        *,
-        disposisi (
-          id,
-          perihal,
-          sifat,
-          dengan_hormat_harap,
-          status,
-          ${statusField},
-          created_at
-        ),
-        feedback_files (
-          id,
-          file_original_name,
-          file_size,
-          file_type,
-          file_path,
-          storage_path
-        )
-      `)
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error(`Error fetching ${role} feedback:`, error);
-      return res.status(400).json({ error: error.message });
-    }
-
-    const transformedData = transformFeedbackData(feedback);
-
-    res.json({
-      message: `Berhasil mengambil feedback ${role}`,
-      data: transformedData,
-      total: transformedData.length
-    });
-
-  } catch (error) {
-    console.error('Server error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/api/:role/disposisi/:disposisiId/feedback', authenticateToken, upload.array('feedback_files', 5), async (req, res) => {
-  try {
-    const { role } = req.params;
-    const { disposisiId } = req.params;
-    const { notes, status } = req.body; // Tambahkan status dari request body
-    const userJabatan = req.user.jabatan;
-    const userName = req.user.name;
-
-    if (!['user', 'sekretaris'].includes(role)) {
-      return res.status(400).json({ error: 'Role tidak valid' });
-    }
-
-    const statusField = role === 'user' ? 'status_dari_kabid' : 'status_dari_sekretaris';
-
-    // Validasi input
-    if (!notes || notes.trim() === '') {
-      return res.status(400).json({
-        error: 'Notes/catatan feedback wajib diisi'
-      });
-    }
-
-    if (!status || !['diproses', 'selesai'].includes(status)) {
-      return res.status(400).json({
-        error: 'Status disposisi wajib dipilih dan harus berupa "diproses" atau "selesai"'
-      });
-    }
-
-    // Pastikan disposisi ada dan ditujukan ke jabatan user
-    const { data: disposisi, error: disposisiError } = await supabase
-      .from('disposisi')
-      .select(`id, disposisi_kepada_jabatan, perihal, created_by, surat_masuk_id, status, ${statusField}`)
-      .eq('id', disposisiId)
-      .eq('disposisi_kepada_jabatan', userJabatan)
-      .single();
-
-    if (disposisiError || !disposisi) {
-      return res.status(404).json({
-        error: 'Disposisi tidak ditemukan atau tidak ditujukan untuk jabatan Anda'
-      });
-    }
-
-    // Cek apakah feedback sudah ada sebelumnya
-    const { data: existingFeedback, error: checkError } = await supabase
-      .from('feedback_disposisi')
-      .select('id')
-      .eq('disposisi_id', disposisiId)
-      .single();
-
-    if (existingFeedback) {
-      return res.status(400).json({
-        error: 'Feedback untuk disposisi ini sudah dikirim sebelumnya'
-      });
-    }
-
-    // Data feedback
-    const feedbackData = {
-      disposisi_id: disposisiId,
-      surat_masuk_id: disposisi.surat_masuk_id,
-      user_id: req.user.id,
-      user_jabatan: userJabatan,
-      user_name: userName,
-      notes: notes.trim(),
-      created_at: new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString()
-    };
-
-    // Insert feedback
-    const { data: feedbackResult, error: feedbackError } = await supabase
-      .from('feedback_disposisi')
-      .insert([feedbackData])
-      .select()
-      .single();
-
-    if (feedbackError) {
-      console.error('Error creating feedback:', feedbackError);
-      return res.status(400).json({ error: feedbackError.message });
-    }
-
-    console.log('Feedback berhasil dibuat:', feedbackResult);
-
-    // Upload files jika ada
-    let fileCount = 0;
-    if (req.files && req.files.length > 0) {
-      const uploadPromises = req.files.map(file =>
-        uploadToSupabaseStorage(file, 'feedback-disposisi', req.headers.authorization?.replace('Bearer ', ''))
-      );
-
-      try {
-        const uploadResults = await Promise.all(uploadPromises);
-
-        // Simpan data file ke database
-        const fileData = uploadResults.map(result => ({
-          feedback_id: feedbackResult.id,
-          disposisi_id: disposisiId,
-          file_path: result.publicUrl,
-          file_filename: result.fileName,
-          file_original_name: result.originalName,
-          file_size: result.size,
-          file_type: result.mimetype,
-          storage_path: result.fileName,
-          created_at: new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString()
-        }));
-
-        const { error: fileError } = await supabase
-          .from('feedback_files')
-          .insert(fileData);
-
-        if (fileError) {
-          // Rollback: hapus feedback dan files dari storage
-          await supabase.from('feedback_disposisi').delete().eq('id', feedbackResult.id);
-
-          // Hapus files dari Supabase Storage
-          const filesToDelete = uploadResults.map(r => r.fileName);
-          await supabase.storage.from('surat-photos').remove(filesToDelete);
-
-          return res.status(400).json({ error: 'Gagal menyimpan file: ' + fileError.message });
-        }
-
-        fileCount = req.files.length;
-        console.log(`${fileCount} files uploaded successfully`);
-      } catch (uploadError) {
-        console.error('Upload error:', uploadError);
-        // Rollback feedback jika upload gagal
-        await supabase.from('feedback_disposisi').delete().eq('id', feedbackResult.id);
-        return res.status(400).json({ error: 'Gagal upload file: ' + uploadError.message });
-      }
-    }
-
-    // Update status disposisi dan has_feedback
-    const { error: updateError } = await supabase
-      .from('disposisi')
-      .update(
-        {
-          has_feedback: true,
-          status: status,
-          [statusField]: status
-        }
-      )
-      .eq('id', disposisiId);
-
-    if (updateError) {
-      console.error('Error updating disposisi status:', updateError);
-      return res.status(500).json({ error: 'Gagal memperbarui status disposisi' });
-    }
-
-    console.log('Status disposisi diupdate menjadi:', status);
-
-    // 🔧 TAMBAHAN: Insert ke disposisi_status_log
-    const statusLogData = {
-      disposisi_id: disposisiId,
-      status: status, // status yang dikirimkan adalah 'diproses' atau 'selesai'
-      oleh_user_id: req.user.id,
-      keterangan: `Disposisi ${status} melalui feedback oleh ${userJabatan}`
-    };
-
-    const { error: logError } = await supabase
-      .from('disposisi_status_log')
-      .insert([statusLogData]);
-
-    if (logError) {
-      console.error('Error creating status log:', logError);
-      // Tidak throw error karena feedback sudah berhasil dibuat
-    }
-
-    res.status(201).json({
-      message: `Feedback berhasil dikirim dan status disposisi diupdate menjadi "${status}"`,
-      data: {
-        ...feedbackResult,
-        status_disposisi: status,
-        file_count: fileCount,
-        has_files: fileCount > 0
-      }
-    });
-
-  } catch (error) {
-    console.error('Server error in feedback creation:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/api/:role/disposisi/:disposisiId/feedback-bawahan', authenticateToken, async (req, res) => {
-  try {
-    const { role } = req.params;
-    const { disposisiId } = req.params;
-
-    if (!['user', 'sekretaris'].includes(role)) {
-      return res.status(400).json({ error: 'Role tidak valid' });
-    }
-
-    const statusField = role === 'user' ? 'status_dari_kabid' : 'status_dari_sekretaris';
-
-    // ✅ Role check - hanya untuk Kabid
-    if (req.user.role !== 'user' && req.user.role !== 'sekretaris') { // Sesuaikan dengan role Kabid Anda
-      return res.status(403).json({ error: 'Hanya Sekretaris dan Kabid yang bisa mengakses feedback bawahan' });
-    }
-
-    // Ambil disposisi untuk mendapatkan diteruskan_kepada_user_id
-    const { data: disposisi, error: disposisiError } = await supabase
-      .from('disposisi')
-      .select('id, diteruskan_kepada_user_id, diteruskan_kepada_jabatan, diteruskan_kepada_nama, status, status_dari_bawahan')
-      .eq('id', disposisiId)
-      .single();
-
-    if (disposisiError || !disposisi) {
-      return res.status(404).json({ error: 'Disposisi tidak ditemukan' });
-    }
-
-
-
-    // Pastikan disposisi ini diteruskan ke seseorang (bukan null)
-    if (!disposisi.diteruskan_kepada_user_id) {
-      // Opsional: return empty jika belum ada penerima
-      return res.status(404).json({ error: 'Disposisi belum diteruskan ke bawahan' });
-    }
-
-    // Ambil feedback dari bawahan (user_id = diteruskan_kepada_user_id)
-    const { data: feedback, error: feedbackError } = await supabase
-      .from('feedback_disposisi')
-      .select(`
-        *,
-        disposisi (
-          id,
-          perihal,
-          sifat,
-          diteruskan_kepada_jabatan,
-          dengan_hormat_harap,
-          nomor_surat,
-          asal_instansi,
-          tanggal_surat,
-          diterima_tanggal,
-          nomor_agenda,
-          created_by,
-          status
-        ),
-        surat_masuk (
-          id,
-          nomor_surat,
-          asal_instansi,
-          tanggal_surat,
-          keterangan,
-          diterima_tanggal,
-          nomor_agenda
-        ),
-        feedback_files (
-          id,
-          file_original_name,
-          file_size,
-          file_type,
-          file_path,
-          storage_path
-        )
-      `)
-      .eq('disposisi_id', disposisiId)
-      .eq('user_id', disposisi.diteruskan_kepada_user_id) // Filter berdasarkan user bawahan
-      .single(); // Karena diasumsikan hanya satu feedback per disposisi per user
-
-    if (feedbackError) {
-      console.error('Error fetching bawahan feedback:', feedbackError);
-      // Jika tidak ditemukan, kirim 404
-      if (feedbackError.code === 'PGRST116') { // Kode untuk single() not found
-        return res.status(404).json({ error: 'Feedback dari bawahan belum diterima' });
-      }
-      return res.status(500).json({ error: feedbackError.message });
-    }
-
-    if (!feedback) {
-      return res.status(404).json({ error: 'Feedback dari bawahan belum diterima' });
-    }
-
-    const files = feedback.feedback_files?.map(file => {
-      let fileUrl = `/api/feedback/file/${file.id}`;
-
-      if (file.file_path && file.file_path.startsWith('http')) {
-        fileUrl = file.file_path;
-      } else if (file.storage_path) {
-        const { data: { publicUrl } } = supabase.storage
-          .from('surat-photos')
-          .getPublicUrl(file.storage_path);
-        fileUrl = publicUrl;
-      }
-
-      return {
-        id: file.id,
-        filename: file.file_original_name,
-        size: file.file_size,
-        type: file.file_type,
-        url: fileUrl
-      };
-    }) || [];
-
-    res.json({
-      ...feedback,
-      files,
-      file_count: files.length,
-      has_files: files.length > 0
-    });
-
-  } catch (error) {
-    console.error('Server error in fetching bawahan feedback:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/api/:role/disposisi/teruskan/:disposisiId', authenticateToken, async (req, res) => {
-  try {
-    const { role } = req.params;
-    const { disposisiId } = req.params;
-    const {
-      diteruskan_kepada_user_id,
-      diteruskan_kepada_jabatan,
-      catatan_atasan,
-      tipe_penerusan
-    } = req.body;
-
-    if (!['user', 'sekretaris'].includes(role)) {
-      return res.status(400).json({ error: 'Role tidak valid' });
-    }
-
-    const statusField = role === 'user' ? 'status_dari_kabid' : 'status_dari_sekretaris';
-
-    // ✅ Role check
-    if (req.user.role !== 'user' && req.user.role !== 'sekretaris') {
-      return res.status(403).json({ error: 'Hanya Sekretaris dan Kabid yang bisa meneruskan disposisi' });
-    }
-
-    // Ambil disposisi yang akan diteruskan
-    const { data: disposisiAwal, error: disposisiError } = await supabase
-      .from('disposisi')
-      .select('*')
-      .eq('id', disposisiId)
-      .single();
-
-    if (disposisiError || !disposisiAwal) {
-      return res.status(404).json({ error: 'Disposisi tidak ditemukan' });
-    }
-
-    // ✅ Hanya bisa meneruskan disposisi yang ditujukan kepada dirinya
-    if (disposisiAwal.disposisi_kepada_jabatan !== req.user.jabatan) {
-      return res.status(403).json({ error: 'Disposisi ini bukan untuk Anda' });
-    }
-
-    let logKeterangan = '';
-    let logKeUserId = null;
-    let updateData;
-    if (req.user.role === 'sekretaris') {
-
-      if (tipe_penerusan === 'jabatan') {
-        if (!diteruskan_kepada_jabatan) {
-          return res.status(400).json({ error: 'Jabatan penerima wajib dipilih' });
-        }
-        updateData = {
-          disposisi_kepada_jabatan: diteruskan_kepada_jabatan,
-          status: 'belum dibaca',
-          status_dari_bawahan: 'belum dibaca'
-        };
-        logKeterangan = `Disposisi diteruskan dari ${req.user.jabatan} ke jabatan ${diteruskan_kepada_jabatan}`;
-      }
-      else {
-        const { data: penerima, error: penerimaError } = await supabase
-          .from('users')
-          .select('id, name, bidang, jabatan')
-          .eq('id', diteruskan_kepada_user_id)
-          .single();
-
-        if (penerimaError || !penerima) {
-          return res.status(404).json({ error: 'User penerima tidak ditemukan' });
-        }
-
-        if (req.user.role !== 'sekretaris' && penerima.bidang !== req.user.bidang) {
-          return res.status(403).json({ error: 'Hanya bisa meneruskan ke user di bidang yang sama' });
-        }
-
-        updateData = {
-          diteruskan_kepada_user_id: penerima.id,
-          diteruskan_kepada_jabatan: penerima.jabatan,
-          diteruskan_kepada_nama: penerima.name,
-          catatan_atasan,
-          [statusField]: 'diteruskan',
-          status_dari_bawahan: 'belum dibaca',
-          updated_at: new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString()
-        };
-        logKeterangan = `Disposisi diteruskan dari ${req.user.jabatan} ke ${penerima.name}`;
-        logKeUserId = penerima.id;
-      }
-    } else {
-      const { data: penerima, error: penerimaError } = await supabase
-        .from('users')
-        .select('id, name, bidang, jabatan')
-        .eq('id', diteruskan_kepada_user_id)
-        .single();
-
-      if (penerimaError || !penerima) {
-        return res.status(404).json({ error: 'User penerima tidak ditemukan' });
-      }
-
-      if (penerima.bidang !== req.user.bidang) {
-        return res.status(403).json({ error: 'Hanya bisa meneruskan ke user di bidang yang sama' });
-      }
-
-      updateData = {
-        diteruskan_kepada_user_id: penerima.id,
-        diteruskan_kepada_jabatan: penerima.jabatan,
-        diteruskan_kepada_nama: penerima.name,
-        catatan_atasan,
-        [statusField]: 'diteruskan',
-        status_dari_bawahan: 'belum dibaca',
-        updated_at: new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString()
-      };
-      logKeterangan = `Disposisi diteruskan dari ${req.user.jabatan} ke ${penerima.name}`;
-      logKeUserId = penerima.id;
-    }
-
-    const { data: updatedDisposisi, error: updateError } = await supabase
-      .from('disposisi')
-      .update(updateData)
-      .eq('id', disposisiId)
-      .select()
-      .single();
-
-    if (updateError) {
-      console.error('Error updating disposisi:', updateError);
-      return res.status(400).json({ error: updateError.message });
-    }
-
-    // 🔥 Tambahkan log status
-    await supabase
-      .from('disposisi_status_log')
-      .insert({
-        disposisi_id: disposisiId,
-        status: 'diteruskan',
-        oleh_user_id: req.user.id,
-        ke_user_id: logKeUserId,
-        keterangan: logKeterangan
-      });
-
-    res.status(200).json({
-      message: 'Disposisi berhasil diteruskan',
-      data: {
-        ...updatedDisposisi,
-        disposisi_sebelumnya: disposisiAwal
-      }
-    });
-
-  } catch (error) {
-    console.error('Server error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Endpoint untuk mendapatkan list jabatan
-app.get('/api/jabatan/list', authenticateToken, async (req, res) => {
-  try {
-    // ✅ Ambil dari master data jabatan atau dari database
-    const jabatanList = [
-      'Kabid Perekonomian, Infrastruktur, dan Kewilayahan',
-      'Kabid Pendanaan, Pengendalian, dan Evaluasi',
-      'Kabid Pemerintahan dan Pengembangan Manusia',
-      'Kabid Penelitian dan Pengembangan',
-      'Kasubag Keuangan',
-      'Kasubag Umum dan Kepegawaian',
-    ];
-
-    res.json(jabatanList);
-  } catch (error) {
-    console.error('Error fetching jabatan:', error);
-    res.status(500).json({ error: 'Gagal memuat daftar jabatan' });
-  }
-});
-
-app.get('/api/:role/feedback/:feedbackId/edit', authenticateToken, async (req, res) => {
-  try {
-    const { role } = req.params;
-    const { feedbackId } = req.params;
-    const userId = req.user.id;
-    const userJabatan = req.user.jabatan;
-
-    if (!['user', 'sekretaris'].includes(role)) {
-      return res.status(400).json({ error: 'Role tidak valid' });
-    }
-
-    const statusField = role === 'user' ? 'status_dari_kabid' : 'status_dari_sekretaris';
-
-    // Ambil detail feedback dengan validasi kepemilikan
-    const { data: feedback, error } = await supabase
-      .from('feedback_disposisi')
-      .select(`
-        *,
-        disposisi (
-          id,
-          perihal,
-          sifat,
-          disposisi_kepada_jabatan,
-          dengan_hormat_harap,
-          created_at,
-          status,
-          ${statusField},
-          surat_masuk (
-            id,
-            keterangan
-          )
-        ),
-        feedback_files (
-          id,
-          file_original_name,
-          file_size,
-          file_type,
-          file_path,
-          storage_path
-        )
-      `)
-      .eq('id', feedbackId)
-      .eq('user_id', userId)
-      .eq('user_jabatan', userJabatan)
-      .single();
-
-    if (error || !feedback) {
-      return res.status(404).json({
-        error: 'Feedback tidak ditemukan atau tidak ada akses untuk mengedit'
-      });
-    }
-
-    // Transform file data
-    const transformedData = transformFeedbackData(feedback ? [feedback] : [])[0];
-
-    res.json({
-      message: 'Berhasil mengambil detail feedback untuk edit',
-      data: transformedData,
-      total: transformedData.length
-    });
-
-  } catch (error) {
-    console.error('Server error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ✏️ Endpoint untuk kabid mengedit feedback
-app.put('/api/:role/feedback/:feedbackId', authenticateToken, upload.array('new_feedback_files', 5), async (req, res) => {
-  try {
-    const { role } = req.params;
-    const { feedbackId } = req.params;
-    const { notes, status, remove_file_ids } = req.body;
-    const userId = req.user.id;
-    const userJabatan = req.user.jabatan;
-    const statusField = role === 'user' ? 'status_dari_kabid' : 'status_dari_sekretaris';
-
-    console.log('Edit feedback request:', {
-      feedbackId,
-      notes,
-      status,
-      statusField,
-      newFilesCount: req.files?.length,
-      removeFileIds: remove_file_ids
-    });
-
-    // Validasi input - sama seperti di create feedback
-    if (!notes || notes.trim() === '') {
-      return res.status(400).json({
-        error: 'Notes/catatan feedback wajib diisi'
-      });
-    }
-
-    if (!status || !['diproses', 'selesai'].includes(status)) {
-      return res.status(400).json({
-        error: 'Status disposisi wajib dipilih dan harus berupa "diproses" atau "selesai"'
-      });
-    }
-
-    // Pastikan feedback ada dan milik user
-    const { data: existingFeedback, error: feedbackError } = await supabase
-      .from('feedback_disposisi')
-      .select(`
-        *,
-        disposisi (
-          id,
-          perihal,
-          created_by,
-          surat_masuk_id,
-          disposisi_kepada_jabatan,
-          status,
-          ${statusField}
-        )
-      `)
-      .eq('id', feedbackId)
-      .eq('user_id', userId)
-      .eq('user_jabatan', userJabatan)
-      .single();
-
-    if (feedbackError || !existingFeedback) {
-      return res.status(404).json({
-        error: 'Feedback tidak ditemukan atau tidak ada akses untuk mengedit'
-      });
-    }
-
-    // Update data feedback
-    const updateData = {
-      notes: notes.trim(),
-      updated_at: new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString()
-    };
-
-    const { data: updatedFeedback, error: updateError } = await supabase
-      .from('feedback_disposisi')
-      .update(updateData)
-      .eq('id', feedbackId)
-      .select()
-      .single();
-
-    if (updateError) {
-      console.error('Error updating feedback:', updateError);
-      return res.status(400).json({ error: updateError.message });
-    }
-
-    console.log('Feedback berhasil diupdate:', updatedFeedback);
-
-    // Handle penghapusan file lama jika ada
-    let removedFileCount = 0;
-    if (remove_file_ids) {
-      try {
-        const removeIds = Array.isArray(remove_file_ids) ? remove_file_ids : [remove_file_ids];
-
-        // Ambil data file yang akan dihapus untuk mendapatkan storage_path
-        const { data: filesToRemove, error: fetchError } = await supabase
-          .from('feedback_files')
-          .select('id, storage_path')
-          .eq('feedback_id', feedbackId)
-          .in('id', removeIds);
-
-        if (!fetchError && filesToRemove && filesToRemove.length > 0) {
-          // Hapus dari storage
-          const storageFilesToDelete = filesToRemove
-            .filter(file => file.storage_path)
-            .map(file => file.storage_path);
-
-          if (storageFilesToDelete.length > 0) {
-            const { error: storageError } = await supabase.storage
-              .from('surat-photos')
-              .remove(storageFilesToDelete);
-
-            if (storageError) {
-              console.error('Error removing files from storage:', storageError);
-            }
-          }
-
-          // Hapus dari database
-          const { error: removeError } = await supabase
-            .from('feedback_files')
-            .delete()
-            .eq('feedback_id', feedbackId)
-            .in('id', removeIds);
-
-          if (removeError) {
-            console.error('Error removing files from database:', removeError);
-          } else {
-            removedFileCount = filesToRemove.length;
-            console.log(`${removedFileCount} files removed successfully`);
-          }
-        }
-      } catch (removeError) {
-        console.error('Error in file removal process:', removeError);
-      }
-    }
-
-    // Upload file baru jika ada - sama seperti di create feedback
-    let newFileCount = 0;
-    if (req.files && req.files.length > 0) {
-      const uploadPromises = req.files.map(file =>
-        uploadToSupabaseStorage(file, 'feedback-disposisi', req.headers.authorization?.replace('Bearer ', ''))
-      );
-
-      try {
-        const uploadResults = await Promise.all(uploadPromises);
-
-        // Simpan data file baru ke database
-        const fileData = uploadResults.map(result => ({
-          feedback_id: feedbackId,
-          disposisi_id: existingFeedback.disposisi_id,
-          file_path: result.publicUrl,
-          file_filename: result.fileName,
-          file_original_name: result.originalName,
-          file_size: result.size,
-          file_type: result.mimetype,
-          storage_path: result.fileName,
-          created_at: new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString()
-        }));
-
-        const { error: fileError } = await supabase
-          .from('feedback_files')
-          .insert(fileData);
-
-        if (fileError) {
-          console.error('Error saving new files:', fileError);
-          // Rollback: hapus files dari storage
-          const filesToDelete = uploadResults.map(r => r.fileName);
-          await supabase.storage.from('surat-photos').remove(filesToDelete);
-
-          return res.status(400).json({ error: 'Gagal menyimpan file baru: ' + fileError.message });
-        }
-
-        newFileCount = req.files.length;
-        console.log(`${newFileCount} new files uploaded successfully`);
-      } catch (uploadError) {
-        console.error('Upload error:', uploadError);
-        return res.status(400).json({ error: 'Gagal upload file baru: ' + uploadError.message });
-      }
-    }
-
-    // Update status disposisi - sama seperti di create feedback
-    const { error: updateDisposisiError } = await supabase
-      .from('disposisi')
-      .update({
-        status: status,
-        [statusField]: status // Update status sesuai pilihan user
-      })
-      .eq('id', existingFeedback.disposisi_id);
-
-    if (updateDisposisiError) {
-      console.error('Error updating disposisi status:', updateDisposisiError);
-      return res.status(500).json({ error: 'Gagal memperbarui status disposisi' });
-    }
-
-    console.log('Status disposisi diupdate menjadi:', status);
-
-    // 🔧 TAMBAHAN: Insert ke disposisi_status_log
-    const statusLogData = {
-      disposisi_id: existingFeedback.disposisi_id,
-      status: status, // status yang dikirimkan ('diproses' atau 'selesai')
-      oleh_user_id: userId,
-      keterangan: `Disposisi ${status} melalui update feedback oleh ${userJabatan}`
-    };
-
-    const { error: logError } = await supabase
-      .from('disposisi_status_log')
-      .insert([statusLogData]);
-
-    if (logError) {
-      console.error('Error creating status log:', logError);
-      // Tidak throw error karena update feedback sudah berhasil
-    }
-
-    // Hitung total file setelah update
-    const { data: remainingFiles, error: countError } = await supabase
-      .from('feedback_files')
-      .select('id')
-      .eq('feedback_id', feedbackId);
-
-    const totalFiles = remainingFiles ? remainingFiles.length : 0;
-
-    res.json({
-      message: `Feedback berhasil diperbarui dan status disposisi diupdate menjadi "${status}"`,
-      data: {
-        ...updatedFeedback,
-        status_disposisi: status,
-        file_count: totalFiles,
-        has_files: totalFiles > 0,
-        changes: {
-          removed_files: removedFileCount,
-          added_files: newFileCount
-        }
-      }
-    });
-
-  } catch (error) {
-    console.error('Server error in feedback update:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
+// ✅ Daftarkan Handlebars helpers di awal
 if (!Handlebars.helpers.eq) {
   Handlebars.registerHelper('eq', (a, b) => a === b);
 }
 
-if (!Handlebars.helpers.includes) {
-  Handlebars.registerHelper('ek', (a, b) => a === b);
+if (!Handlebars.helpers.tanggalIndo) {
+  Handlebars.registerHelper('tanggalIndo', function (value) {
+    if (!value) return '-';
+    const bulan = [
+      'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+      'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+    ];
+    const date = new Date(value);
+    if (isNaN(date)) return '-';
+    return `${date.getDate()} ${bulan[date.getMonth()]} ${date.getFullYear()}`;
+  });
 }
 
-const prepareTemplateData = (disposisi) => {
+// 🔥 NEW → helper untuk cek apakah array berisi nilai tertentu
+if (!Handlebars.helpers.includes) {
+  Handlebars.registerHelper('includes', function (array, value) {
+    return Array.isArray(array) && array.includes(value);
+  });
+}
+
+// 🔧 Fungsi bantu untuk olah tindakan
+const prepareTemplateData = (surat) => {
+  const tindakanArray = typeof surat.tindakan === 'string'
+    ? surat.tindakan.split(',').map(item => item.trim())
+    : surat.tindakan || [];
+
+  const tindakanFlags = {
+    tanggapan_dan_saran: tindakanArray.includes('Tanggapan dan Saran'),
+    wakili_hadir_terima: tindakanArray.includes('Wakili / Hadir / Terima'),
+    mendampingi_saya: tindakanArray.includes('Mendampingi Saya'),
+    untuk_ditindaklanjuti: tindakanArray.includes('Untuk Ditindaklanjuti'),
+    pelajari_telaah_sarannya: tindakanArray.includes("Pelajari / Telaa'h / Sarannya"),
+    untuk_dikaji_sesuai_ketentuan: tindakanArray.includes('Untuk Dikaji Sesuai dengan Ketentuan'),
+    untuk_dibantu_dipertimbangkan: tindakanArray.includes('Untuk Dibantu / Dipertimbangkan / Sesuai dengan Ketentuan'),
+    selesaikan_proses_ketentuan: tindakanArray.includes('Selesaikan / Proses Sesuai Ketentuan'),
+    monitor_realisasi_perkembangan: tindakanArray.includes('Monitor Realisasinya / Perkembangannya'),
+    siapkan_pointers_sambutan: tindakanArray.includes('Siapkan Pointers / Sambutan / Bahan'),
+    menghadap_informasi: tindakanArray.includes('Menghadap / Informasinya'),
+    membaca_file_referensi: tindakanArray.includes('Membaca / File / Referensi'),
+    agendakan_jadwalkan_koordinasi: tindakanArray.includes('Agendakan / Jadwalkan / Koordinasikan')
+  };
 
   return {
-    ...disposisi,
+    ...surat,
+    tindakanArray,   // ← dibutuhkan oleh {{includes tindakanArray "..."}}
+    tindakan: tindakanFlags
   };
 };
 
 // 📄 Endpoint untuk generate PDF
-app.get('/api/disposisi/:id/pdf', authenticateToken, async (req, res) => {
+app.get('/api/surat/:id/pdf', authenticateToken, async (req, res) => {
   try {
     console.log('📥 Permintaan PDF untuk surat ID:', req.params.id);
 
-    const { data: disposisi, error } = await supabase
-      .from('disposisi')
+    const { data: surat, error } = await supabase
+      .from('surat_masuk')
       .select(`
-        *
+        *,
+        users!surat_masuk_created_by_fkey (name, jabatan),
+        processed_user:users!surat_masuk_processed_by_fkey (name, jabatan)
       `)
       .eq('id', req.params.id)
       .single();
 
-    if (error || !disposisi) {
-      console.error('❌ disposisi tidak ditemukan atau Supabase error:', error?.message || error);
-      return res.status(404).json({ error: 'disposisi not found', detail: error?.message });
+    if (error || !surat) {
+      console.error('❌ Surat tidak ditemukan atau Supabase error:', error?.message || error);
+      return res.status(404).json({ error: 'Surat not found', detail: error?.message });
     }
 
     const templatePath = path.join(__dirname, 'templates', 'disposisi.html');
     const htmlTemplate = fs.readFileSync(templatePath, 'utf8');
     const template = Handlebars.compile(htmlTemplate);
 
-    const preparedData = prepareTemplateData(disposisi);
-
+    const preparedData = prepareTemplateData(surat);
+    const tglDiterima = surat.created_at
+      ? new Date(surat.created_at).toLocaleDateString('id-ID')
+      : '-';
 
     const html = template({
       ...preparedData,
+      tgl_diterima: tglDiterima,
+      processed_by: surat.processed_user?.name || '-',
+      jabatan: surat.processed_user?.jabatan || '-'
     });
 
     // ✅ Perbaikan: Tambahkan args penting
@@ -4027,7 +3822,7 @@ app.get('/api/disposisi/:id/pdf', authenticateToken, async (req, res) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="disposisi-${disposisi.nomor_surat || disposisi.id}.pdf"`
+      `attachment; filename="disposisi-${surat.nomor_surat || surat.id}.pdf"`
     );
     res.send(pdfBuffer);
   } catch (err) {
