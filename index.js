@@ -9,6 +9,9 @@ const Handlebars = require('handlebars');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const axios = require('axios')
+const QRCode = require('qrcode');
+const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -93,9 +96,6 @@ const uploadToSupabaseStorage = async (file, folder = 'surat-masuk', userToken) 
   const fileExt = path.extname(file.originalname);
   const fileName = `${folder}/${Date.now()}-${Math.round(Math.random() * 1E9)}${fileExt}`;
 
-  console.log('Uploading file:', fileName);
-  console.log('User token exists:', !!userToken); // ✅ Debug log
-
   const { data, error } = await supabaseAdmin.storage
     .from('surat-photos')
     .upload(fileName, file.buffer, {
@@ -122,6 +122,1425 @@ const uploadToSupabaseStorage = async (file, folder = 'surat-masuk', userToken) 
   };
 };
 
+// Helper function upload ke Supabase (disesuaikan untuk dokumentasi)
+const uploadDocumentationFile = async (file, folder = 'dokumentasi', userToken) => {
+  const fileExt = path.extname(file.originalname);
+  const fileName = `${folder}/${Date.now()}-${Math.round(Math.random() * 1E9)}${fileExt}`;
+
+  console.log('Uploading documentation file:', fileName);
+
+  const { data, error } = await supabaseAdmin.storage
+    .from('documentation-storage')
+    .upload(fileName, file.buffer, {
+      contentType: file.mimetype,
+      upsert: false
+    });
+
+  if (error) {
+    console.log('Supabase storage error:', error);
+    throw new Error(`Upload failed: ${error.message}`);
+  }
+
+  // Get public URL
+  const { data: { publicUrl } } = supabase.storage
+    .from('documentation-storage')
+    .getPublicUrl(fileName);
+
+  return {
+    fileName: data.path,
+    publicUrl: publicUrl,
+    size: file.size,
+    originalName: file.originalname,
+    mimetype: file.mimetype
+  };
+};
+
+const uploadBuktiTamu = async (file, folder = 'bukti-tamu', userToken) => {
+  const fileExt = path.extname(file.originalname);
+  const fileName = `${folder}/${Date.now()}-${Math.round(Math.random() * 1E9)}${fileExt}`;
+
+  console.log('Uploading bukti foto tamu:', fileName);
+
+  const { data, error } = await supabaseAdmin.storage
+    .from('buku-tamu')
+    .upload(fileName, file.buffer, {
+      contentType: file.mimetype,
+      upsert: false
+    });
+
+  if (error) {
+    console.log('Supabase storage error:', error);
+    throw new Error(`Upload failed: ${error.message}`);
+  }
+
+  // Get public URL - gunakan supabaseAdmin untuk konsistensi
+  const { data: { publicUrl } } = supabaseAdmin.storage
+    .from('buku-tamu')
+    .getPublicUrl(fileName);
+
+  return {
+    fileName: data.path,
+    publicUrl: publicUrl,
+    size: file.size,
+    originalName: file.originalname,
+    mimetype: file.mimetype
+  };
+};
+
+// ========= buat qr untuk tamu ========= //
+function generateQRToken() {
+  return uuidv4().replace(/-/g, '').substring(0, 16);
+}
+
+app.post('/api/admin/buku-tamu', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { nama_acara, tanggal_acara, lokasi, deskripsi } = req.body;
+
+    // Validasi input
+    if (!nama_acara || !tanggal_acara || !lokasi) {
+      return res.status(400).json({ 
+        error: 'Nama acara, tanggal, dan lokasi harus diisi' 
+      });
+    }
+
+    // Generate unique QR token
+    const qr_token = generateQRToken();
+    
+    // Insert ke database
+    const { data, error } = await supabase
+      .from('buku_tamu')
+      .insert([{
+        nama_acara,
+        tanggal_acara,
+        lokasi,
+        deskripsi: deskripsi || '',
+        qr_token,
+        created_by: req.user.id,
+        status: 'active'
+      }])
+      .select();
+
+    if (error) {
+      console.error('Supabase error:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    // Generate QR Code
+    const qrUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/guest/${qr_token}`;
+    const qrCodeDataURL = await QRCode.toDataURL(qrUrl);
+
+    res.status(201).json({
+      message: 'Buku tamu berhasil dibuat',
+      event: data[0],
+      qr_code: qrCodeDataURL,
+      guest_url: qrUrl
+    });
+
+  } catch (error) {
+    console.error('Server error:', error);
+    res.status(500).json({ error: 'Gagal membuat buku tamu' });
+  }
+});
+
+app.get('/api/admin/buku-tamu', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { page = 1, limit = 10, status, search } = req.query;
+    const offset = (page - 1) * limit;
+
+    let query = supabase
+      .from('buku_tamu')
+      .select(`
+        *,
+        kehadiran_tamu(count)
+      `)
+      .order('created_at', { ascending: false });
+
+    // Filter berdasarkan status jika ada
+    if (status && ['active', 'inactive'].includes(status)) {
+      query = query.eq('status', status);
+    }
+
+    // Search berdasarkan nama acara atau lokasi
+    if (search) {
+      query = query.or(`nama_acara.ilike.%${search}%,lokasi.ilike.%${search}%`);
+    }
+
+    // Pagination
+    query = query.range(offset, offset + limit - 1);
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      console.error('Supabase error:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json({
+      message: 'Data buku tamu berhasil diambil',
+      data: data,
+      pagination: {
+        current_page: parseInt(page),
+        total_pages: Math.ceil(count / limit),
+        total_items: count,
+        items_per_page: parseInt(limit)
+      }
+    });
+
+  } catch (error) {
+    console.error('Server error:', error);
+    res.status(500).json({ error: 'Gagal mengambil data buku tamu' });
+  }
+});
+
+app.get('/api/admin/buku-tamu/:id/tamu', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { page = 1, limit = 10, search } = req.query;
+    const offset = (page - 1) * limit;
+
+    // Cek apakah buku tamu exists
+    const { data: bukuTamu, error: bukuTamuError } = await supabase
+      .from('buku_tamu')
+      .select('id, nama_acara, tanggal_acara, lokasi')
+      .eq('id', id)
+      .single();
+
+    if (bukuTamuError || !bukuTamu) {
+      return res.status(404).json({ error: 'Buku tamu tidak ditemukan' });
+    }
+
+    let query = supabase
+      .from('kehadiran_tamu')
+      .select(`
+        *,
+        foto_kehadiran_tamu(
+          id,
+          file_url,
+          file_name,
+          original_name,
+          file_size,
+          mime_type
+        )
+      `)
+      .eq('buku_tamu_id', id)
+      .order('check_in_time', { ascending: false });
+
+    // Search berdasarkan nama atau instansi
+    if (search) {
+      query = query.or(`nama_lengkap.ilike.%${search}%,instansi.ilike.%${search}%`);
+    }
+
+    // Pagination
+    query = query.range(offset, offset + limit - 1);
+
+    const { data: tamu, error: tamuError, count } = await query;
+
+    if (tamuError) {
+      console.error('Supabase error:', tamuError);
+      return res.status(500).json({ error: tamuError.message });
+    }
+
+    res.json({
+      message: 'Data tamu berhasil diambil',
+      buku_tamu: bukuTamu,
+      data: tamu,
+      pagination: {
+        current_page: parseInt(page),
+        total_pages: Math.ceil(count / limit),
+        total_items: count,
+        items_per_page: parseInt(limit)
+      }
+    });
+
+  } catch (error) {
+    console.error('Server error:', error);
+    res.status(500).json({ error: 'Gagal mengambil data tamu' });
+  }
+});
+
+app.patch('/api/admin/buku-tamu/:id/status', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    // Validasi status
+    if (!status || !['active', 'inactive'].includes(status)) {
+      return res.status(400).json({ 
+        error: 'Status harus berupa "active" atau "inactive"' 
+      });
+    }
+
+    const { data, error } = await supabase
+      .from('buku_tamu')
+      .update({ 
+        status,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select();
+
+    if (error) {
+      console.error('Supabase error:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: 'Buku tamu tidak ditemukan' });
+    }
+
+    res.json({
+      message: `Status buku tamu berhasil diubah menjadi ${status}`,
+      data: data[0]
+    });
+
+  } catch (error) {
+    console.error('Server error:', error);
+    res.status(500).json({ error: 'Gagal mengubah status buku tamu' });
+  }
+});
+
+// 4. Admin: Hapus buku tamu
+app.delete('/api/admin/buku-tamu/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Hapus buku tamu (cascade akan menghapus kehadiran_tamu dan foto_kehadiran_tamu)
+    const { data, error } = await supabase
+      .from('buku_tamu')
+      .delete()
+      .eq('id', id)
+      .select();
+
+    if (error) {
+      console.error('Supabase error:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: 'Buku tamu tidak ditemukan' });
+    }
+
+    res.json({
+      message: 'Buku tamu berhasil dihapus',
+      deleted_event: data[0]
+    });
+
+  } catch (error) {
+    console.error('Server error:', error);
+    res.status(500).json({ error: 'Gagal menghapus buku tamu' });
+  }
+});
+
+app.delete('/api/admin/foto-tamu/:foto_id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { foto_id } = req.params;
+
+    // Get foto data terlebih dahulu
+    const { data: foto, error: fotoError } = await supabase
+      .from('foto_kehadiran_tamu')
+      .select('*')
+      .eq('id', foto_id)
+      .single();
+
+    if (fotoError || !foto) {
+      return res.status(404).json({ error: 'Foto tidak ditemukan' });
+    }
+
+    // Extract file name dari file_url atau gunakan file_name langsung
+    let fileName = foto.file_name;
+    
+    // Jika file_name kosong, extract dari file_url
+    if (!fileName && foto.file_url) {
+      const urlParts = foto.file_url.split('/');
+      const bucketIndex = urlParts.findIndex(part => part === 'buku-tamu');
+      if (bucketIndex !== -1 && bucketIndex < urlParts.length - 1) {
+        // Ambil path setelah bucket name
+        fileName = urlParts.slice(bucketIndex + 1).join('/');
+      }
+    }
+
+    console.log('Attempting to delete file:', fileName);
+
+    // Hapus file dari Supabase Storage terlebih dahulu
+    let storageDeleteSuccess = false;
+    if (fileName) {
+      try {
+        const { error: storageError } = await supabaseAdmin.storage
+          .from('buku-tamu')
+          .remove([fileName]);
+
+        if (storageError) {
+          console.error('Storage delete error:', storageError);
+
+        } else {
+          storageDeleteSuccess = true;
+          console.log('File successfully deleted from storage:', fileName);
+        }
+      } catch (storageError) {
+        console.error('Storage delete exception:', storageError);
+        // Lanjutkan ke penghapusan database
+      }
+    }
+
+    // Hapus record dari database
+    const { error: deleteError } = await supabase
+      .from('foto_kehadiran_tamu')
+      .delete()
+      .eq('id', foto_id);
+
+    if (deleteError) {
+      console.error('Database delete error:', deleteError);
+      return res.status(500).json({ error: deleteError.message });
+    }
+
+    // Response dengan informasi lengkap
+    res.json({
+      message: 'Foto tamu berhasil dihapus',
+      deleted_photo: {
+        id: foto.id,
+        file_name: foto.file_name,
+        original_name: foto.original_name,
+        file_url: foto.file_url
+      },
+      storage_deleted: storageDeleteSuccess,
+      file_path_used: fileName
+    });
+
+  } catch (error) {
+    console.error('Server error:', error);
+    res.status(500).json({ error: 'Gagal menghapus foto tamu' });
+  }
+});
+
+app.get('/api/public/buku-tamu/:qr_token', async (req, res) => {
+  try {
+    const { qr_token } = req.params;
+
+    const { data, error } = await supabase
+      .from('buku_tamu')
+      .select('id, nama_acara, tanggal_acara, lokasi, deskripsi, status')
+      .eq('qr_token', qr_token)
+      .eq('status', 'active')
+      .single();
+
+    if (error || !data) {
+      return res.status(404).json({ 
+        error: 'buku tamu tidak ditemukan atau sudah tidak aktif' 
+      });
+    }
+
+    res.json({
+      message: 'Info acara berhasil diambil',
+      event: data
+    });
+
+  } catch (error) {
+    console.error('Server error:', error);
+    res.status(500).json({ error: 'Gagal mengambil info acara' });
+  }
+});
+
+app.post('/api/public/buku-tamu/:qr_token', upload.array('photos', 5), async (req, res) => {
+  try {
+    const { qr_token } = req.params;
+    const { nama_lengkap, instansi, jabatan, keperluan } = req.body;
+    const photos = req.files;
+
+    // Validasi input
+    if (!nama_lengkap) {
+      return res.status(400).json({ error: 'Nama lengkap harus diisi' });
+    }
+
+    // Cek apakah buku tamu exists dan active
+    const { data: event, error: eventError } = await supabase
+      .from('buku_tamu')
+      .select('id')
+      .eq('qr_token', qr_token)
+      .eq('status', 'active')
+      .single();
+
+    if (eventError || !event) {
+      return res.status(404).json({ 
+        error: 'Event tidak ditemukan atau sudah tidak aktif' 
+      });
+    }
+
+    // Insert data kehadiran tamu
+    const { data: kehadiran, error: kehadiranError } = await supabase
+      .from('kehadiran_tamu')
+      .insert([{
+        buku_tamu_id: event.id,
+        nama_lengkap,
+        instansi: instansi || '',
+        jabatan: jabatan || '',
+        keperluan: keperluan || ''
+      }])
+      .select();
+
+    if (kehadiranError) {
+      console.error('Supabase error:', kehadiranError);
+      return res.status(500).json({ error: kehadiranError.message });
+    }
+
+    const kehadiranId = kehadiran[0].id;
+    const uploadedPhotos = [];
+
+    // Process uploaded photos jika ada
+    if (photos && photos.length > 0) {
+      for (const photo of photos) {
+        try {
+          // Validasi file
+          const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png'];
+          const maxSize = 5 * 1024 * 1024; // 5MB
+
+          if (!allowedTypes.includes(photo.mimetype)) {
+            console.error(`Invalid file type: ${photo.mimetype}`);
+            continue; // Skip file ini, lanjut ke file berikutnya
+          }
+
+          if (photo.size > maxSize) {
+            console.error(`File too large: ${photo.size} bytes`);
+            continue; // Skip file ini, lanjut ke file berikutnya
+          }
+
+          // Upload menggunakan fungsi uploadBuktiTamu
+          const uploadResult = await uploadBuktiTamu(photo, 'bukti-tamu');
+
+          // Simpan info foto ke database
+          const { data: fotoData, error: fotoError } = await supabase
+            .from('foto_kehadiran_tamu')
+            .insert([{
+              kehadiran_tamu_id: kehadiranId,
+              file_url: uploadResult.publicUrl,
+              file_name: uploadResult.fileName,
+              original_name: uploadResult.originalName,
+              file_size: uploadResult.size,
+              mime_type: uploadResult.mimetype
+            }])
+            .select();
+
+          if (fotoError) {
+            console.error('Error saving photo info:', fotoError);
+            // Jika gagal simpan ke DB, hapus file dari storage
+            try {
+              await supabaseAdmin.storage
+                .from('buku-tamu')
+                .remove([uploadResult.fileName]);
+            } catch (removeError) {
+              console.error('Error removing uploaded file:', removeError);
+            }
+          } else {
+            uploadedPhotos.push({
+              ...fotoData[0],
+              public_url: uploadResult.publicUrl
+            });
+          }
+
+        } catch (photoError) {
+          console.error('Error processing photo:', photoError);
+          // Continue dengan foto lain jika ada error
+        }
+      }
+    }
+
+    res.status(201).json({
+      message: 'Kehadiran berhasil dicatat',
+      attendance: kehadiran[0],
+      uploaded_photos: uploadedPhotos,
+      photo_count: uploadedPhotos.length
+    });
+
+  } catch (error) {
+    console.error('Server error:', error);
+    res.status(500).json({ error: 'Gagal mencatat kehadiran' });
+  }
+});
+
+// ===== 1. BUAT POST DOKUMENTASI =====
+app.post('/api/dokumentasi/post', authenticateToken, upload.array('files', 5), async (req, res) => {
+  try {
+    const {
+      caption = '',
+      kategori = 'umum', // umum, pekerjaan, tutorial, meeting, etc
+      tags = '' // hashtags atau tags
+    } = req.body;
+
+    // Validasi - minimal harus ada caption atau file
+    if ((!caption || caption.trim() === '') && (!req.files || req.files.length === 0)) {
+      return res.status(400).json({
+        error: 'Post harus memiliki caption atau minimal 1 file'
+      });
+    }
+
+    // Insert post dokumentasi
+    const postData = {
+      user_id: req.user.id,
+      caption: caption.trim(),
+      kategori,
+      tags: tags.trim(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    const { data: postResult, error: postError } = await supabase
+      .from('dokumentasi_posts')
+      .insert([postData])
+      .select('*, users:user_id (id, name, email)')
+      .single();
+
+    if (postError) {
+      console.log('Post creation error:', postError);
+      return res.status(400).json({ error: postError.message });
+    }
+
+    // Upload files jika ada
+    let uploadedFiles = [];
+    if (req.files && req.files.length > 0) {
+      try {
+        const uploadPromises = req.files.map(file =>
+          uploadDocumentationFile(file, 'dokumentasi', req.headers.authorization?.replace('Bearer ', ''))
+        );
+
+        const uploadResults = await Promise.all(uploadPromises);
+
+        // Simpan metadata files ke database
+        const filesData = uploadResults.map((result, index) => ({
+          post_id: postResult.id,
+          file_url: result.publicUrl,
+          file_name: result.fileName,
+          original_name: result.originalName,
+          file_size: result.size,
+          mime_type: result.mimetype,
+          file_order: index + 1, // untuk urutan tampilan
+          created_at: new Date().toISOString()
+        }));
+
+        const { data: filesResult, error: filesError } = await supabase
+          .from('dokumentasi_files')
+          .insert(filesData)
+          .select();
+
+        if (filesError) {
+          // Rollback: hapus post dan files dari storage
+          await supabase.from('dokumentasi_posts').delete().eq('id', postResult.id);
+
+          const filesToDelete = uploadResults.map(r => r.fileName);
+          await supabaseAdmin.storage.from('documentation-storage').remove(filesToDelete);
+
+          return res.status(400).json({ error: 'Gagal menyimpan files: ' + filesError.message });
+        }
+
+        uploadedFiles = filesResult;
+      } catch (uploadError) {
+        console.log('Upload error:', uploadError);
+        // Rollback post jika upload gagal
+        await supabase.from('dokumentasi_posts').delete().eq('id', postResult.id);
+        return res.status(400).json({ error: 'Gagal upload files: ' + uploadError.message });
+      }
+    }
+
+    res.status(201).json({
+      message: 'Post dokumentasi berhasil dibuat',
+      data: {
+        ...postResult,
+        files: uploadedFiles
+      }
+    });
+
+  } catch (error) {
+    console.error('Error creating documentation post:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+app.get('/api/dokumentasi/feed', authenticateToken, async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      kategori = '',
+      search = ''
+    } = req.query;
+
+    const offset = (page - 1) * limit;
+
+    // Build query
+    let query = supabase
+      .from('dokumentasi_posts')
+      .select(`
+        *,
+        users:user_id (
+          id,
+          name,
+          email
+        ),
+        files:dokumentasi_files (
+          id,
+          file_url,
+          original_name,
+          file_size,
+          mime_type,
+          file_order
+        ),
+        likes:dokumentasi_likes (
+          id,
+          user_id
+        ),
+        comments:dokumentasi_comments (
+          id,
+          user_id,
+          comment,
+          created_at,
+          users:user_id (
+            name
+          )
+        )
+      `)
+      .order('created_at', { ascending: false });
+
+    // Filter berdasarkan kategori
+    if (kategori && kategori !== '') {
+      query = query.eq('kategori', kategori);
+    }
+
+    // Search berdasarkan caption atau tags
+    if (search && search !== '') {
+      query = query.or(`caption.ilike.%${search}%,tags.ilike.%${search}%`);
+    }
+
+    // Pagination
+    query = query.range(offset, offset + limit - 1);
+
+    const { data: posts, error } = await query;
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    // Format data untuk response (seperti Instagram feed)
+    const formattedPosts = posts.map(post => ({
+      id: post.id,
+      caption: post.caption,
+      kategori: post.kategori,
+      tags: post.tags,
+      created_at: post.created_at,
+      user: {
+        id: post.users.id,
+        name: post.users.name,
+      },
+      files: post.files.sort((a, b) => a.file_order - b.file_order),
+      likes_count: post.likes.length,
+      is_liked: post.likes.some(like => like.user_id === req.user.id),
+      comments_count: post.comments.length,
+      latest_comments: post.comments
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        .slice(0, 1)
+        .map(comment => ({
+          id: comment.id,
+          comment: comment.comment,
+          created_at: comment.created_at,
+          user: {
+            name: comment.users.name,
+          }
+        }))
+    }));
+
+    res.json({
+      data: formattedPosts,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        has_more: posts.length === parseInt(limit)
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching documentation feed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/dokumentasi/trending', authenticateToken, async (req, res) => {
+  try {
+    const { limit = 10, days = 7 } = req.query;
+
+    // Hitung tanggal batas (misal 7 hari terakhir)
+    const daysAgo = new Date();
+    daysAgo.setDate(daysAgo.getDate() - days);
+
+    // KODE BARU (DIPERBAIKI):
+    const { data: posts, error } = await supabase
+      .from('dokumentasi_posts')
+      .select(`
+    *,
+    users:user_id (
+      id,
+      name
+    ),
+    files:dokumentasi_files (
+      id,
+      file_url,
+      mime_type,
+      file_order
+    ),
+    likes:dokumentasi_likes (
+      id,
+      created_at
+    )
+  `)
+      .gte('created_at', daysAgo.toISOString())
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    const postsWithCommentCount = await Promise.all(
+      posts.map(async (post) => {
+        const { count: commentsCount, error: countError } = await supabase
+          .from('dokumentasi_comments')
+          .select('*', { count: 'exact', head: true })
+          .eq('post_id', post.id);
+
+        return {
+          ...post,
+          comments_count: commentsCount || 0
+        };
+      })
+    );
+
+    const sortedPosts = postsWithCommentCount
+      .map(post => ({
+        ...post,
+        recent_likes_count: post.likes.filter(like =>
+          new Date(like.created_at) >= daysAgo
+        ).length
+      }))
+      .sort((a, b) => b.recent_likes_count - a.recent_likes_count)
+      .slice(0, parseInt(limit));
+
+    const formattedPosts = sortedPosts.map(post => ({
+      id: post.id,
+      caption: post.caption,
+      kategori: post.kategori,
+      created_at: post.created_at,
+      user: {
+        id: post.users.id,
+        name: post.users.name
+      },
+      thumbnail: post.files.length > 0 ? post.files[0].file_url : null,
+      files_count: post.files.length,
+      total_likes: post.likes.length,
+      recent_likes: post.recent_likes_count,
+      comments_count: post.comments_count
+    }));
+
+    res.json({
+      data: formattedPosts,
+      period: `${days} hari terakhir`
+    });
+
+  } catch (error) {
+    console.error('Error fetching trending posts:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/dokumentasi/search', authenticateToken, async (req, res) => {
+  try {
+    const { q, kategori, page = 1, limit = 10 } = req.query;
+
+    if (!q || q.trim() === '') {
+      return res.status(400).json({ error: 'Query pencarian tidak boleh kosong' });
+    }
+
+    const offset = (page - 1) * limit;
+
+    let query = supabase
+      .from('dokumentasi_posts')
+      .select(`
+        *,
+        users:user_id (
+          id,
+          name
+        ),
+        files:dokumentasi_files (
+          id,
+          file_url,
+          original_name,
+          mime_type,
+          file_order
+        ),
+        likes:dokumentasi_likes (count),
+        comments:dokumentasi_comments (count)
+      `)
+      .or(`caption.ilike.%${q}%,tags.ilike.%${q}%`)
+      .order('created_at', { ascending: false });
+
+    if (kategori && kategori !== '') {
+      query = query.eq('kategori', kategori);
+    }
+
+    query = query.range(offset, offset + limit - 1);
+
+    const { data: posts, error } = await query;
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    const formattedPosts = posts.map(post => ({
+      id: post.id,
+      caption: post.caption,
+      kategori: post.kategori,
+      tags: post.tags,
+      created_at: post.created_at,
+      user: {
+        id: post.users.id,
+        name: post.users.name,
+        avatar: post.users.avatar_url || '/default-avatar.png'
+      },
+      thumbnail: post.files.length > 0 ? post.files[0].file_url : null,
+      files_count: post.files.length,
+      likes_count: post.likes.length,
+      comments_count: post.comments.length
+    }));
+
+    res.json({
+      data: formattedPosts,
+      search_query: q,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        has_more: posts.length === parseInt(limit)
+      }
+    });
+
+  } catch (error) {
+    console.error('Error searching posts:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== 13. GET KATEGORI YANG TERSEDIA =====
+app.get('/api/dokumentasi/categories', authenticateToken, async (req, res) => {
+  try {
+    const { data: categories, error } = await supabase
+      .from('dokumentasi_posts')
+      .select('kategori')
+      .not('kategori', 'is', null);
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    // Hitung jumlah post per kategori
+    const categoryCount = {};
+    categories.forEach(item => {
+      const cat = item.kategori || 'umum';
+      categoryCount[cat] = (categoryCount[cat] || 0) + 1;
+    });
+
+    const formattedCategories = Object.entries(categoryCount)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+
+    res.json({ data: formattedCategories });
+
+  } catch (error) {
+    console.error('Error fetching categories:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/dokumentasi/:postId/like', authenticateToken, async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const userId = req.user.id;
+
+    // Cek apakah sudah like sebelumnya
+    const { data: existingLike } = await supabase
+      .from('dokumentasi_likes')
+      .select('id')
+      .eq('post_id', postId)
+      .eq('user_id', userId)
+      .single();
+
+    if (existingLike) {
+      // Unlike - hapus like
+      const { error } = await supabase
+        .from('dokumentasi_likes')
+        .delete()
+        .eq('id', existingLike.id);
+
+      if (error) {
+        return res.status(400).json({ error: error.message });
+      }
+
+      res.json({ message: 'Post di-unlike', action: 'unliked' });
+    } else {
+      // Like - tambah like
+      const { error } = await supabase
+        .from('dokumentasi_likes')
+        .insert([{
+          post_id: postId,
+          user_id: userId,
+          created_at: new Date().toISOString()
+        }]);
+
+      if (error) {
+        return res.status(400).json({ error: error.message });
+      }
+
+      res.json({ message: 'Post di-like', action: 'liked' });
+    }
+
+  } catch (error) {
+    console.error('Error toggling like:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/dokumentasi/:postId/comment', authenticateToken, async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const { comment } = req.body;
+
+    if (!comment || comment.trim() === '') {
+      return res.status(400).json({ error: 'Komentar tidak boleh kosong' });
+    }
+
+    const commentData = {
+      post_id: postId,
+      user_id: req.user.id,
+      comment: comment.trim(),
+      created_at: new Date().toISOString()
+    };
+
+    const { data: commentResult, error } = await supabase
+      .from('dokumentasi_comments')
+      .insert([commentData])
+      .select(`
+        *,
+        users:user_id (
+          name
+        )
+      `)
+      .single();
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    res.status(201).json({
+      message: 'Komentar berhasil ditambahkan',
+      data: {
+        id: commentResult.id,
+        comment: commentResult.comment,
+        created_at: commentResult.created_at,
+        user: {
+          name: commentResult.users.name
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error adding comment:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== 5. GET DETAIL POST =====
+app.get('/api/dokumentasi/:postId', authenticateToken, async (req, res) => {
+  try {
+    const { postId } = req.params;
+
+    const { data: post, error } = await supabase
+      .from('dokumentasi_posts')
+      .select(`
+        *,
+        users:user_id (
+          id,
+          name,
+          email
+        ),
+        files:dokumentasi_files (
+          id,
+          file_url,
+          original_name,
+          file_size,
+          mime_type,
+          file_order
+        ),
+        likes:dokumentasi_likes (
+          id,
+          user_id,
+          users:user_id (
+            name
+          )
+        ),
+        comments:dokumentasi_comments (
+          id,
+          user_id,
+          comment,
+          created_at,
+          users:user_id (
+            name
+          )
+        )
+      `)
+      .eq('id', postId)
+      .single();
+
+    if (error) {
+      return res.status(404).json({ error: 'Post tidak ditemukan' });
+    }
+
+    // Format response
+    const formattedPost = {
+      id: post.id,
+      caption: post.caption,
+      kategori: post.kategori,
+      tags: post.tags,
+      created_at: post.created_at,
+      user: {
+        id: post.users.id,
+        name: post.users.name
+      },
+      files: post.files.sort((a, b) => a.file_order - b.file_order),
+      likes: {
+        count: post.likes.length,
+        is_liked: post.likes.some(like => like.user_id === req.user.id),
+        users: post.likes.map(like => ({
+          id: like.user_id,
+          name: like.users.name
+        }))
+      },
+      comments: post.comments
+        .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+        .map(comment => ({
+          id: comment.id,
+          comment: comment.comment,
+          created_at: comment.created_at,
+          user: {
+            id: comment.user_id,
+            name: comment.users.name
+          }
+        }))
+    };
+
+    res.json({ data: formattedPost });
+
+  } catch (error) {
+    console.error('Error fetching post detail:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== 6. HAPUS KOMENTAR (HANYA PEMILIK KOMENTAR) =====
+app.delete('/api/dokumentasi/comment/:commentId', authenticateToken, async (req, res) => {
+  try {
+    const { commentId } = req.params;
+
+    // Cek apakah komentar milik user atau user adalah admin
+    const { data: comment, error: fetchError } = await supabase
+      .from('dokumentasi_comments')
+      .select('user_id')
+      .eq('id', commentId)
+      .single();
+
+    if (fetchError || !comment) {
+      return res.status(404).json({ error: 'Komentar tidak ditemukan' });
+    }
+
+    // Hanya pemilik komentar atau admin yang bisa hapus
+    if (comment.user_id !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Tidak memiliki izin untuk menghapus komentar ini' });
+    }
+
+    const { error } = await supabase
+      .from('dokumentasi_comments')
+      .delete()
+      .eq('id', commentId);
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    res.json({ message: 'Komentar berhasil dihapus' });
+
+  } catch (error) {
+    console.error('Error deleting comment:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== 7. EDIT POST (HANYA PEMILIK POST) =====
+app.put('/api/dokumentasi/:postId', authenticateToken, async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const { caption, kategori, tags } = req.body;
+
+    // Cek apakah post milik user atau user adalah admin
+    const { data: post, error: fetchError } = await supabase
+      .from('dokumentasi_posts')
+      .select('user_id')
+      .eq('id', postId)
+      .single();
+
+    if (fetchError || !post) {
+      return res.status(404).json({ error: 'Post tidak ditemukan' });
+    }
+
+    if (post.user_id !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Tidak memiliki izin untuk mengedit post ini' });
+    }
+
+    // Update post
+    const updateData = {
+      updated_at: new Date().toISOString()
+    };
+
+    if (caption !== undefined) updateData.caption = caption.trim();
+    if (kategori !== undefined) updateData.kategori = kategori;
+    if (tags !== undefined) updateData.tags = tags.trim();
+
+    const { data: updatedPost, error } = await supabase
+      .from('dokumentasi_posts')
+      .update(updateData)
+      .eq('id', postId)
+      .select(`
+        *,
+        users:user_id (
+          id,
+          name
+        ),
+        files:dokumentasi_files (
+          id,
+          file_url,
+          original_name,
+          mime_type,
+          file_order
+        )
+      `)
+      .single();
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    res.json({
+      message: 'Post berhasil diupdate',
+      data: updatedPost
+    });
+
+  } catch (error) {
+    console.error('Error updating post:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== 8. HAPUS POST (HANYA PEMILIK POST) =====
+app.delete('/api/dokumentasi/:postId', authenticateToken, async (req, res) => {
+  try {
+    const { postId } = req.params;
+
+    // Cek apakah post milik user atau user adalah admin
+    const { data: post, error: fetchError } = await supabase
+      .from('dokumentasi_posts')
+      .select(`
+        user_id,
+        files:dokumentasi_files (
+          file_name
+        )
+      `)
+      .eq('id', postId)
+      .single();
+
+    if (fetchError || !post) {
+      return res.status(404).json({ error: 'Post tidak ditemukan' });
+    }
+
+    if (post.user_id !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Tidak memiliki izin untuk menghapus post ini' });
+    }
+
+    // Hapus files dari storage
+    if (post.files && post.files.length > 0) {
+      const filesToDelete = post.files.map(file => file.file_name);
+      await supabaseAdmin.storage.from('documentation-storage').remove(filesToDelete);
+    }
+
+    // Hapus post (cascade akan hapus likes, comments, dan files records)
+    const { error } = await supabase
+      .from('dokumentasi_posts')
+      .delete()
+      .eq('id', postId);
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    res.json({ message: 'Post berhasil dihapus' });
+
+  } catch (error) {
+    console.error('Error deleting post:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/dokumentasi/user/:userId', authenticateToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { page = 1, limit = 12 } = req.query;
+    const offset = (page - 1) * limit;
+
+    // Query tanpa count yang bermasalah
+    const { data: posts, error } = await supabase
+      .from('dokumentasi_posts')
+      .select(`
+        *,
+        users:user_id (
+          id,
+          name
+        ),
+        files:dokumentasi_files (
+          id,
+          file_url,
+          mime_type,
+          file_order
+        ),
+        likes:dokumentasi_likes (
+          id
+        )
+      `)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    // Hitung comments secara terpisah untuk setiap post
+    const postsWithCommentCount = await Promise.all(
+      posts.map(async (post) => {
+        const { count: commentsCount, error: countError } = await supabase
+          .from('dokumentasi_comments')
+          .select('*', { count: 'exact', head: true })
+          .eq('post_id', post.id);
+
+        if (countError) {
+          console.error('Error counting comments for post', post.id, ':', countError);
+        }
+
+        return {
+          ...post,
+          comments_count: commentsCount || 0
+        };
+      })
+    );
+
+    // Format untuk grid view (seperti profile Instagram)
+    const formattedPosts = postsWithCommentCount.map(post => ({
+      id: post.id,
+      caption: post.caption,
+      created_at: post.created_at,
+      thumbnail: post.files.length > 0 ? post.files[0].file_url : null,
+      files_count: post.files.length,
+      likes_count: post.likes.length,
+      comments_count: post.comments_count,
+      is_multiple: post.files.length > 1
+    }));
+
+    res.json({
+      data: formattedPosts,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        has_more: posts.length === parseInt(limit)
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching user posts:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== 12. GET USER STATS =====
+app.get('/api/dokumentasi/stats/:userId', authenticateToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Hitung total posts
+    const { count: postsCount, error: countError } = await supabase // Tambahkan penanganan error
+      .from('dokumentasi_posts')
+      .select('*', { count: 'exact', head: true }) // Perlu spesifik kolom untuk count, atau gunakan head: true
+      .eq('user_id', userId);
+
+    if (countError) { // Tambahkan penanganan error
+      console.error('Error counting posts:', countError);
+      // Anda bisa memilih untuk mengembalikan error atau melanjutkan dengan count 0
+      // return res.status(400).json({ error: countError.message });
+    }
+
+    // --- PERBAIKAN DIMULAI DI SINI ---
+    // 1. Jalankan query untuk mendapatkan ID post user terlebih dahulu
+    const { data: userPostIdsData, error: idsError } = await supabase
+      .from('dokumentasi_posts')
+      .select('id') // Hanya pilih kolom 'id'
+      .eq('user_id', userId);
+
+    if (idsError) { // Tambahkan penanganan error
+      console.error('Error fetching user post IDs:', idsError);
+      // Anda bisa memilih untuk mengembalikan error atau melanjutkan dengan likes 0
+      // return res.status(400).json({ error: idsError.message });
+      // Untuk sementara, kita bisa lewatkan dan anggap tidak ada post ID
+      userPostIdsData = []; // Atau tetap lempar error
+      // Misalnya, lempar error:
+      // return res.status(400).json({ error: idsError.message });
+    }
+
+    // 2. Ekstrak array ID dari hasil query
+    const userPostIds = userPostIdsData.map(post => post.id);
+    // --- PERBAIKAN BERAKHIR DI SINI ---
+
+    // 3. Gunakan array ID dalam query .in()
+    let likesData = [];
+    let likesError = null;
+    if (userPostIds.length > 0) { // Hanya lakukan query jika ada ID
+      const result = await supabase
+        .from('dokumentasi_likes')
+        .select('post_id') // Pastikan ini hanya mengambil post_id
+        .in('post_id', userPostIds); // Gunakan array yang sudah diekstrak
+
+      likesData = result.data || [];
+      likesError = result.error;
+    }
+
+    if (likesError) { // Tambahkan penanganan error
+      console.error('Error counting likes:', likesError);
+      // Anda bisa memilih untuk mengembalikan error
+      // return res.status(400).json({ error: likesError.message });
+    }
+
+    res.json({
+      data: {
+        posts_count: postsCount || 0,
+        total_likes_received: likesData.length || 0 // Gunakan panjang array likesData
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching user stats:', error);
+    // Memberikan pesan error yang lebih spesifik bisa membantu debugging
+    res.status(500).json({ error: 'Internal server error while fetching stats' });
+  }
+});
+
+// ===== 11. SEARCH POSTS =====
 
 
 // =========================================ENDPOINT=======================================//
@@ -198,6 +1617,67 @@ app.get('/api/daftar-user', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/lokasi-rekomendasi', async (req, res) => {
+  try {
+    const { q } = req.query;
+    const serpApiKey = process.env.SERPAPI_KEY;
+
+    if (!serpApiKey) {
+      return res.status(500).json({
+        error: 'SerpAPI key not configured in backend environment variables'
+      });
+    }
+
+    if (!q) {
+      return res.status(400).json({
+        error: 'Query parameter "q" is required'
+      });
+    }
+
+    // Panggil SerpAPI
+    const response = await axios.get('https://serpapi.com/search.json', {
+      params: {
+        engine: 'google_maps',
+        q: q,
+        api_key: serpApiKey,
+        ll: '@-7.3279,108.2200,12z',
+        limit: 5
+      }
+    });
+
+    // Filter hanya data yang dibutuhkan untuk mengurangi ukuran response
+    const filteredResults = response.data.local_results?.slice(0, 5).map(item => ({
+      title: item.title,
+      address: item.address,
+      place_id: item.place_id,
+      coordinates: item.coordinates,
+      rating: item.rating,
+      reviews: item.reviews
+    })) || [];
+
+    res.json({
+      local_results: filteredResults,
+      search_parameters: response.data.search_parameters
+    });
+
+  } catch (error) {
+    console.error('Error fetching recommendations:', error.response?.data || error.message);
+
+    if (error.response) {
+      // Error dari SerpAPI
+      return res.status(error.response.status).json({
+        error: 'Failed to fetch recommendations from location service',
+        details: error.response.data
+      });
+    }
+
+    // Error lainnya
+    res.status(500).json({
+      error: 'Internal server error while fetching recommendations'
+    });
   }
 });
 
@@ -644,6 +2124,395 @@ app.delete('/api/admin/surat-keluar/:id', authenticateToken, requireAdmin, async
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Gagal menghapus surat keluar', detail: error.message });
+  }
+});
+
+// 😁 Endpoint untuk admin membuat jadwal acara
+const nodemailer = require("nodemailer");
+
+// Setup transporter Gmail (taruh di luar endpoint biar ga bikin ulang tiap request)
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD
+  }
+});
+
+app.post("/api/admin/jadwal-acara/buat", authenticateToken, requireAdmin, async (req, res) => {
+    try {
+      const {
+        nama_acara,
+        deskripsi,
+        tanggal_mulai,
+        tanggal_selesai,
+        waktu_mulai,
+        waktu_selesai,
+        lokasi,
+        pic_nama,
+        pic_kontak,
+        kategori = "",
+        status = "aktif",
+        prioritas = "biasa",
+        peserta_target
+      } = req.body;
+
+      // VALIDASI INPUT
+      if (!nama_acara || !tanggal_mulai || !waktu_mulai || !lokasi || !pic_nama) {
+        return res.status(400).json({
+          error: "Nama acara, tanggal mulai, waktu mulai, lokasi, dan PIC nama wajib diisi",
+          received: { nama_acara, tanggal_mulai, waktu_mulai, lokasi, pic_nama }
+        });
+      }
+
+      // VALIDASI TANGGAL
+      const startDate = new Date(tanggal_mulai + " " + waktu_mulai);
+      const endDate =
+        tanggal_selesai && waktu_selesai
+          ? new Date(tanggal_selesai + " " + waktu_selesai)
+          : null;
+
+      if (startDate < new Date()) {
+        return res.status(400).json({
+          error: "Tanggal dan waktu mulai tidak boleh di masa lalu"
+        });
+      }
+
+      if (endDate && endDate <= startDate) {
+        return res.status(400).json({
+          error: "Tanggal dan waktu selesai harus setelah waktu mulai"
+        });
+      }
+
+      const jadwalData = {
+        nama_acara,
+        deskripsi: deskripsi || "",
+        tanggal_mulai,
+        tanggal_selesai: tanggal_selesai || tanggal_mulai,
+        waktu_mulai,
+        waktu_selesai: waktu_selesai || null,
+        lokasi,
+        pic_nama,
+        pic_kontak: pic_kontak || "",
+        kategori,
+        status,
+        prioritas,
+        peserta_target: peserta_target || null,
+        created_by: req.user.id,
+        created_at: new Date(new Date().getTime() + 7 * 60 * 60 * 1000).toISOString()
+      };
+
+      const { data, error } = await supabase
+        .from("jadwal_acara")
+        .insert([jadwalData])
+        .select()
+        .single();
+
+      if (error) {
+        return res.status(400).json({ error: error.message });
+      }
+
+      // 🔹 Ambil semua email user dari tabel users
+      const { data: users, error: userError } = await supabase
+        .from("users")
+        .select("email");
+
+      if (userError) {
+        console.error("Gagal ambil data user:", userError);
+      } else {
+        // 🔹 Kirim email ke semua user
+        const mailOptions = {
+          from: `"Sistem Surat Pemkot" <${process.env.GMAIL_USER}>`,
+          to: users.map((u) => u.email).join(","), // gabung semua email
+          subject: `📅 Jadwal Acara Baru: ${nama_acara}`,
+          html: `
+            <h2>${nama_acara}</h2>
+            <p><b>Deskripsi:</b> ${deskripsi || "-"} </p>
+            <p><b>Tanggal:</b> ${tanggal_mulai} ${waktu_mulai} 
+               ${tanggal_selesai ? "s/d " + tanggal_selesai + " " + (waktu_selesai || "") : ""}</p>
+            <p><b>Lokasi:</b> ${lokasi}</p>
+            <p><b>PIC:</b> ${pic_nama} (${pic_kontak || "-"})</p>
+            <br/>
+            <p>Silakan cek detail lengkap di <a href="https://sistem-pemkot.local/dashboard">Dashboard</a></p>
+          `
+        };
+
+        try {
+          const info = await transporter.sendMail(mailOptions);
+          console.log("📩 Email info:", info);
+        } catch (err) {
+          console.error("❌ Gagal kirim email notifikasi:", err);
+        }
+      }
+
+      res.status(201).json({
+        message: "Jadwal acara berhasil dibuat dan notifikasi email terkirim",
+        data: data
+      });
+    } catch (error) {
+      console.error("Server error:", error);
+      res.status(500).json({ error: "Gagal membuat jadwal acara" });
+    }
+  }
+);
+
+
+// 😁 Endpoint untuk admin melihat semua jadwal acara
+app.get('/api/admin/jadwal-acara', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const {
+      status = '',
+      kategori = '',
+      bulan = '',
+      tahun = new Date().getFullYear(),
+      page = 1,
+      limit = 10
+    } = req.query;
+
+    let query = supabase
+      .from('jadwal_acara')
+      .select(`
+        *,
+        creator:created_by(name, email)
+      `)
+      .order('tanggal_mulai', { ascending: true })
+      .order('waktu_mulai', { ascending: true });
+
+    // Filter berdasarkan status
+    if (status) {
+      query = query.eq('status', status);
+    }
+
+    // Filter berdasarkan kategori
+    if (kategori) {
+      query = query.eq('kategori', kategori);
+    }
+
+    // Filter berdasarkan bulan dan tahun
+    if (bulan && tahun) {
+      const startDate = `${tahun}-${bulan.padStart(2, '0')}-01`;
+      const endDate = `${tahun}-${bulan.padStart(2, '0')}-31`;
+      query = query.gte('tanggal_mulai', startDate).lte('tanggal_mulai', endDate);
+    } else if (tahun) {
+      const startDate = `${tahun}-01-01`;
+      const endDate = `${tahun}-12-31`;
+      query = query.gte('tanggal_mulai', startDate).lte('tanggal_mulai', endDate);
+    }
+
+    // Pagination
+    const offset = (page - 1) * limit;
+    query = query.range(offset, offset + limit - 1);
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    res.json({
+      message: 'Daftar jadwal acara',
+      data: data || [],
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: count || data?.length || 0
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 😁 Endpoint untuk admin melihat detail jadwal acara
+app.get('/api/admin/jadwal-acara/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data, error } = await supabase
+      .from('jadwal_acara')
+      .select(`
+        *,
+        creator:created_by(name, email, jabatan)
+      `)
+      .eq('id', id)
+      .single();
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    if (!data) {
+      return res.status(404).json({ error: 'Jadwal acara tidak ditemukan' });
+    }
+
+    res.json({
+      message: 'Detail jadwal acara',
+      data: data
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 😁 Endpoint untuk admin update jadwal acara
+app.put('/api/admin/jadwal-acara/:id/update', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      nama_acara,
+      deskripsi,
+      tanggal_mulai,
+      tanggal_selesai,
+      waktu_mulai,
+      waktu_selesai,
+      lokasi,
+      pic_nama,
+      pic_kontak,
+      kategori,
+      status,
+      prioritas,
+      peserta_target
+    } = req.body;
+
+    // Cek apakah jadwal acara ada
+    const { data: existing, error: checkError } = await supabase
+      .from('jadwal_acara')
+      .select('id')
+      .eq('id', id)
+      .single();
+
+    if (checkError || !existing) {
+      return res.status(404).json({ error: 'Jadwal acara tidak ditemukan' });
+    }
+
+    // VALIDASI TANGGAL jika diubah
+    if (tanggal_mulai && waktu_mulai) {
+      const startDate = new Date(tanggal_mulai + ' ' + waktu_mulai);
+      const endDate = tanggal_selesai && waktu_selesai ? new Date(tanggal_selesai + ' ' + waktu_selesai) : null;
+
+      if (endDate && endDate <= startDate) {
+        return res.status(400).json({
+          error: 'Tanggal dan waktu selesai harus setelah waktu mulai'
+        });
+      }
+    }
+
+    const updateData = {
+      nama_acara,
+      deskripsi,
+      tanggal_mulai,
+      tanggal_selesai,
+      waktu_mulai,
+      waktu_selesai,
+      lokasi,
+      pic_nama,
+      pic_kontak,
+      kategori,
+      status,
+      prioritas,
+      peserta_target,
+      updated_at: new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString()
+    };
+
+    // Hapus field yang undefined
+    Object.keys(updateData).forEach(key => {
+      if (updateData[key] === undefined) {
+        delete updateData[key];
+      }
+    });
+
+    const { data, error } = await supabase
+      .from('jadwal_acara')
+      .update(updateData)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    res.json({
+      message: 'Jadwal acara berhasil diupdate',
+      data: data
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 😁 Endpoint untuk admin hapus jadwal acara
+app.delete('/api/admin/jadwal-acara/:id/delete', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Cek apakah jadwal acara ada
+    const { data: existing, error: checkError } = await supabase
+      .from('jadwal_acara')
+      .select('nama_acara')
+      .eq('id', id)
+      .single();
+
+    if (checkError || !existing) {
+      return res.status(404).json({ error: 'Jadwal acara tidak ditemukan' });
+    }
+
+    const { error } = await supabase
+      .from('jadwal_acara')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    res.json({
+      message: 'Jadwal acara berhasil dihapus',
+      deleted_item: existing.nama_acara
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 😁 Endpoint untuk admin ubah status jadwal acara
+app.patch('/api/admin/jadwal-acara/:id/status', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    // Validasi status
+    const validStatus = ['aktif', 'selesai', 'dibatalkan', 'ditunda'];
+    if (!status || !validStatus.includes(status)) {
+      return res.status(400).json({
+        error: `Status harus salah satu dari: ${validStatus.join(', ')}`
+      });
+    }
+
+    const { data, error } = await supabase
+      .from('jadwal_acara')
+      .update({
+        status,
+        updated_at: new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString()
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    if (!data) {
+      return res.status(404).json({ error: 'Jadwal acara tidak ditemukan' });
+    }
+
+    res.json({
+      message: `Status jadwal acara berhasil diubah menjadi ${status}`,
+      data: data
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 // =======================================ADMIN END=========================================//
@@ -3034,8 +4903,8 @@ app.get('/api/leaderboard/:tipe', authenticateToken, async (req, res) => {
       selectField = 'diteruskan_kepada_nama';
       fieldName = 'name';
     } else {
-      return res.status(400).json({ 
-        error: 'Tipe leaderboard tidak valid. Gunakan "atasan" atau "bawahan"' 
+      return res.status(400).json({
+        error: 'Tipe leaderboard tidak valid. Gunakan "atasan" atau "bawahan"'
       });
     }
 
