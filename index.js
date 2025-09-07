@@ -2309,57 +2309,140 @@ app.post("/api/admin/jadwal-acara/buat", authenticateToken, requireAdmin, async 
       if (userError) {
         console.error("Gagal ambil data user:", userError);
       } else {
-        // 🔹 Kirim email menggunakan Resend
+        // 🔹 Kirim email menggunakan Resend (Individual Sending)
         try {
-          const emailData = await resend.emails.send({
-            from: 'Sistem Surat Pemkot <noreply@yourdomain.com>', // 🔹 Ganti dengan domain verified Anda
-            to: users.map((u) => u.email), // Array email langsung
-            subject: `📅 Jadwal Acara Baru: ${nama_acara}`,
-            html: `
-              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                <h2 style="color: #2563eb; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px;">
-                  📅 ${nama_acara}
-                </h2>
-                
-                <div style="background-color: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
-                  <p><strong>📝 Deskripsi:</strong> ${deskripsi || "-"}</p>
-                  
-                  <p><strong>📅 Tanggal & Waktu:</strong><br/>
-                     ${tanggal_mulai} pukul ${waktu_mulai}
-                     ${tanggal_selesai && tanggal_selesai !== tanggal_mulai ? 
-                       `s/d ${tanggal_selesai}` : ''} 
-                     ${waktu_selesai ? `pukul ${waktu_selesai}` : ''}
-                  </p>
-                  
-                  <p><strong>📍 Lokasi:</strong> ${lokasi}</p>
-                  
-                  <p><strong>👤 PIC (Person In Charge):</strong><br/>
-                     ${pic_nama} ${pic_kontak ? `(${pic_kontak})` : ''}
-                  </p>
-                  
-                  ${kategori ? `<p><strong>🏷️ Kategori:</strong> ${kategori}</p>` : ''}
-                  
-                  ${prioritas !== 'biasa' ? `<p><strong>⚡ Prioritas:</strong> <span style="color: #dc2626; font-weight: bold;">${prioritas.toUpperCase()}</span></p>` : ''}
-                </div>
-                
-                <div style="text-align: center; margin: 30px 0;">
-                  <a href="https://sistem-pemkot.local/dashboard" 
-                     style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-                    🔗 Lihat Detail di Dashboard
-                  </a>
-                </div>
-                
-                <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;">
-                <p style="color: #6b7280; font-size: 12px; text-align: center;">
-                  Email otomatis dari Sistem Surat Pemkot<br/>
-                  Mohon tidak membalas email ini
-                </p>
-              </div>
-            `
-          });
+          // Debug: tampilkan raw data dari database
+          console.log("🗄️ Raw users from DB:", users);
+          console.log("📧 Email fields:", users.map(u => ({ email: u.email, type: typeof u.email })));
 
-          console.log("📩 Email berhasil terkirim:", emailData);
-          
+          // Filter dan validasi email addresses
+          const validEmails = users
+            .map(u => u.email)
+            .filter(email => email && typeof email === 'string')
+            .map(email => email.trim())
+            .filter(email => email.includes('@') && email.includes('.'))
+            .filter(email => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
+
+          if (validEmails.length === 0) {
+            console.log("⚠️ Tidak ada email valid untuk dikirim");
+          } else {
+            console.log(`📧 Mengirim ke ${validEmails.length} email valid:`, validEmails);
+
+            // Send email ke setiap user individual
+            const emailPromises = validEmails.map(email => 
+              resend.emails.send({
+                from: 'onboarding@resend.dev', // Email testing resend
+                to: [email], // Array dengan single email
+                subject: `📅 Jadwal Acara Baru: ${nama_acara}`,
+                html: `
+                  <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <div style="text-align: center; margin-bottom: 30px;">
+                      <h1 style="color: #2563eb; margin: 0; font-size: 24px;">
+                        📅 Jadwal Acara Baru
+                      </h1>
+                      <div style="width: 100%; height: 3px; background: linear-gradient(90deg, #2563eb, #3b82f6); margin: 10px 0;"></div>
+                    </div>
+
+                    <div style="background-color: #f8fafc; padding: 25px; border-radius: 12px; border-left: 4px solid #2563eb; margin-bottom: 25px;">
+                      <h2 style="color: #1e40af; margin: 0 0 15px 0; font-size: 20px;">
+                        ${nama_acara}
+                      </h2>
+                      
+                      <div style="margin-bottom: 15px;">
+                        <strong style="color: #374151;">📝 Deskripsi:</strong><br/>
+                        <span style="color: #6b7280;">${deskripsi || "Tidak ada deskripsi"}</span>
+                      </div>
+                      
+                      <div style="margin-bottom: 15px;">
+                        <strong style="color: #374151;">📅 Tanggal & Waktu:</strong><br/>
+                        <span style="color: #059669; font-weight: 600;">
+                          ${tanggal_mulai} pukul ${waktu_mulai}
+                          ${tanggal_selesai && tanggal_selesai !== tanggal_mulai ? 
+                            `<br/>s/d ${tanggal_selesai}` : ''} 
+                          ${waktu_selesai ? ` pukul ${waktu_selesai}` : ''}
+                        </span>
+                      </div>
+                      
+                      <div style="margin-bottom: 15px;">
+                        <strong style="color: #374151;">📍 Lokasi:</strong><br/>
+                        <span style="color: #dc2626; font-weight: 600;">${lokasi}</span>
+                      </div>
+                      
+                      <div style="margin-bottom: 15px;">
+                        <strong style="color: #374151;">👤 PIC (Person In Charge):</strong><br/>
+                        <span style="color: #7c3aed; font-weight: 600;">
+                          ${pic_nama} ${pic_kontak ? `<br/>📞 ${pic_kontak}` : ''}
+                        </span>
+                      </div>
+                      
+                      ${kategori ? `
+                        <div style="margin-bottom: 15px;">
+                          <strong style="color: #374151;">🏷️ Kategori:</strong>
+                          <span style="background-color: #e5e7eb; padding: 4px 8px; border-radius: 4px; font-size: 12px; color: #374151;">${kategori}</span>
+                        </div>
+                      ` : ''}
+                      
+                      ${prioritas !== 'biasa' ? `
+                        <div style="margin-bottom: 15px;">
+                          <strong style="color: #374151;">⚡ Prioritas:</strong>
+                          <span style="background-color: #fee2e2; color: #dc2626; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 14px; text-transform: uppercase;">
+                            ${prioritas}
+                          </span>
+                        </div>
+                      ` : ''}
+
+                      ${peserta_target ? `
+                        <div style="margin-bottom: 15px;">
+                          <strong style="color: #374151;">👥 Target Peserta:</strong><br/>
+                          <span style="color: #059669; font-weight: 600;">${peserta_target}</span>
+                        </div>
+                      ` : ''}
+                    </div>
+                    
+                    <div style="text-align: center; margin: 30px 0;">
+                      <a href="https://sistem-pemkot.local/dashboard" 
+                         style="background: linear-gradient(135deg, #2563eb, #3b82f6); color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: 600; box-shadow: 0 4px 6px rgba(37, 99, 235, 0.25);">
+                        🔗 Lihat Detail di Dashboard
+                      </a>
+                    </div>
+                    
+                    <div style="border-top: 2px dashed #e5e7eb; padding-top: 20px; text-align: center;">
+                      <p style="color: #9ca3af; font-size: 13px; margin: 0; line-height: 1.5;">
+                        📧 Email otomatis dari <strong>Sistem Surat Pemkot</strong><br/>
+                        🚫 Mohon tidak membalas email ini<br/>
+                        📅 Dikirim pada ${new Date().toLocaleString('id-ID', { 
+                          timeZone: 'Asia/Jakarta',
+                          year: 'numeric',
+                          month: 'long', 
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })} WIB
+                      </p>
+                    </div>
+                  </div>
+                `
+              })
+            );
+
+            // Wait for all emails to be sent
+            const results = await Promise.allSettled(emailPromises);
+            
+            const successful = results.filter(r => r.status === 'fulfilled').length;
+            const failed = results.filter(r => r.status === 'rejected').length;
+            
+            console.log(`📊 Hasil pengiriman email: ${successful} berhasil, ${failed} gagal dari ${validEmails.length} total`);
+            
+            // Log specific errors for debugging
+            results.forEach((result, index) => {
+              if (result.status === 'fulfilled') {
+                console.log(`✅ Email berhasil ke ${validEmails[index]}: ID ${result.value.data?.id || 'unknown'}`);
+              } else {
+                console.error(`❌ Email gagal ke ${validEmails[index]}:`, result.reason?.message || result.reason);
+              }
+            });
+          }
+
         } catch (emailError) {
           console.error("❌ Gagal kirim email notifikasi:", emailError);
           // Email gagal tapi response tetap sukses karena data sudah tersimpan
@@ -2370,6 +2453,7 @@ app.post("/api/admin/jadwal-acara/buat", authenticateToken, requireAdmin, async 
         message: "Jadwal acara berhasil dibuat dan notifikasi email terkirim",
         data: data
       });
+      
     } catch (error) {
       console.error("Server error:", error);
       res.status(500).json({ error: "Gagal membuat jadwal acara" });
