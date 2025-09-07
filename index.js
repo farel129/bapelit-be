@@ -2331,9 +2331,27 @@ app.post("/api/admin/jadwal-acara/buat", authenticateToken, requireAdmin, async 
             // Send email ke setiap user individual
             const emailPromises = validEmails.map(email => 
               resend.emails.send({
-                from: 'onboarding@resend.dev', // Email testing resend
+                from: 'Sistem Pemkot <onboarding@resend.dev>', // Nama sender yang jelas
                 to: [email], // Array dengan single email
-                subject: `📅 Jadwal Acara Baru: ${nama_acara}`,
+                subject: `[SISTEM PEMKOT] 📅 Jadwal Acara Baru: ${nama_acara}`,
+                text: `JADWAL ACARA BARU
+
+Nama Acara: ${nama_acara}
+Deskripsi: ${deskripsi || "Tidak ada deskripsi"}
+Tanggal: ${tanggal_mulai} pukul ${waktu_mulai}
+${tanggal_selesai && tanggal_selesai !== tanggal_mulai ? `s/d ${tanggal_selesai}` : ''} 
+${waktu_selesai ? ` pukul ${waktu_selesai}` : ''}
+Lokasi: ${lokasi}
+PIC: ${pic_nama} ${pic_kontak ? `(${pic_kontak})` : ''}
+${kategori ? `Kategori: ${kategori}` : ''}
+${prioritas !== 'biasa' ? `Prioritas: ${prioritas.toUpperCase()}` : ''}
+
+Lihat detail lengkap di: https://sistem-pemkot.local/dashboard
+
+---
+Email otomatis dari Sistem Surat Pemkot
+Mohon tidak membalas email ini`, // Plain text version
+                subject: `[SISTEM PEMKOT] 📅 Jadwal Acara Baru: ${nama_acara}`,
                 html: `
                   <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
                     <div style="text-align: center; margin-bottom: 30px;">
@@ -2425,22 +2443,47 @@ app.post("/api/admin/jadwal-acara/buat", authenticateToken, requireAdmin, async 
               })
             );
 
-            // Wait for all emails to be sent
-            const results = await Promise.allSettled(emailPromises);
+            // Wait for all emails dengan timeout
+            console.log("🚀 Memulai pengiriman email...");
+            const results = await Promise.allSettled(
+              emailPromises.map(promise => 
+                Promise.race([
+                  promise,
+                  new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Email timeout (30s)')), 30000)
+                  )
+                ])
+              )
+            );
             
             const successful = results.filter(r => r.status === 'fulfilled').length;
             const failed = results.filter(r => r.status === 'rejected').length;
             
-            console.log(`📊 Hasil pengiriman email: ${successful} berhasil, ${failed} gagal dari ${validEmails.length} total`);
+            console.log(`📊 HASIL PENGIRIMAN EMAIL:`);
+            console.log(`✅ Berhasil: ${successful}`);
+            console.log(`❌ Gagal: ${failed}`);
+            console.log(`📋 Total: ${allEmails.length}`);
             
-            // Log specific errors for debugging
+            // Log detailed results
             results.forEach((result, index) => {
+              const email = allEmails[index];
               if (result.status === 'fulfilled') {
-                console.log(`✅ Email berhasil ke ${validEmails[index]}: ID ${result.value.data?.id || 'unknown'}`);
+                const messageId = result.value?.data?.id || 'unknown';
+                console.log(`✅ SUKSES → ${email} (ID: ${messageId})`);
               } else {
-                console.error(`❌ Email gagal ke ${validEmails[index]}:`, result.reason?.message || result.reason);
+                const errorMsg = result.reason?.message || result.reason || 'Unknown error';
+                console.error(`❌ GAGAL → ${email}: ${errorMsg}`);
               }
             });
+            
+            // Additional API check
+            if (failed === allEmails.length) {
+              console.error("🚨 SEMUA EMAIL GAGAL! Kemungkinan masalah:");
+              console.error("1. API Key tidak valid");
+              console.error("2. Quota Resend habis");
+              console.error("3. Network issue");
+              console.error("4. Resend service down");
+            }
           }
 
         } catch (emailError) {
