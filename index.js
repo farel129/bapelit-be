@@ -512,6 +512,78 @@ app.delete('/api/admin/foto-tamu/:foto_id', authenticateToken, requireAdmin, asy
   }
 });
 
+// TAMBAHKAN API BARU: Check apakah device sudah pernah submit
+app.post('/api/public/buku-tamu/:qr_token/check-device', async (req, res) => {
+  try {
+    const { qr_token } = req.params;
+    const { device_id } = req.body;
+    
+    if (!device_id) {
+      return res.status(400).json({ 
+        error: 'Device ID required' 
+      });
+    }
+    
+    // 1. Get event info
+    const { data: event, error: eventError } = await supabase
+      .from('buku_tamu')
+      .select('id, nama_acara, lokasi, tanggal_acara, deskripsi, status')
+      .eq('qr_token', qr_token)
+      .eq('status', 'active')
+      .single();
+      
+    if (eventError || !event) {
+      return res.status(404).json({ 
+        error: 'Buku tamu tidak ditemukan atau sudah tidak aktif' 
+      });
+    }
+    
+    // 2. Check submission by device_id
+    const { data: kehadiran, error: checkError } = await supabase
+      .from('kehadiran_tamu')
+      .select(`
+        id, 
+        nama_lengkap, 
+        instansi, 
+        jabatan, 
+        keperluan, 
+        check_in_time,
+        created_at
+      `)
+      .eq('buku_tamu_id', event.id)
+      .eq('device_id', device_id)
+      .single();
+    
+    if (kehadiran) {
+      // Device sudah pernah submit
+      res.json({
+        hasSubmitted: true,
+        event: event,
+        submission: {
+          nama_lengkap: kehadiran.nama_lengkap,
+          instansi: kehadiran.instansi,
+          jabatan: kehadiran.jabatan,
+          keperluan: kehadiran.keperluan,
+          submitted_at: kehadiran.created_at,
+          check_in_time: kehadiran.check_in_time
+        }
+      });
+    } else {
+      // Device belum pernah submit
+      res.json({
+        hasSubmitted: false,
+        event: event
+      });
+    }
+    
+  } catch (error) {
+    console.error('Check device submission error:', error);
+    res.status(500).json({ 
+      error: 'Internal server error' 
+    });
+  }
+});
+
 app.get('/api/public/buku-tamu/:qr_token', async (req, res) => {
   try {
     const { qr_token } = req.params;
@@ -540,15 +612,18 @@ app.get('/api/public/buku-tamu/:qr_token', async (req, res) => {
   }
 });
 
+// GANTI: API POST yang existing dengan yang ini
 app.post('/api/public/buku-tamu/:qr_token', upload.array('photos', 5), async (req, res) => {
   try {
     const { qr_token } = req.params;
-    const { nama_lengkap, instansi, jabatan, keperluan } = req.body;
+    const { nama_lengkap, instansi, jabatan, keperluan, device_id } = req.body;
     const photos = req.files;
 
     // Validasi input
-    if (!nama_lengkap) {
-      return res.status(400).json({ error: 'Nama lengkap harus diisi' });
+    if (!nama_lengkap || !device_id) {
+      return res.status(400).json({ 
+        error: 'Nama lengkap dan device ID harus diisi' 
+      });
     }
 
     // Cek apakah buku tamu exists dan active
@@ -565,11 +640,30 @@ app.post('/api/public/buku-tamu/:qr_token', upload.array('photos', 5), async (re
       });
     }
 
-    // Insert data kehadiran tamu
+    // 🚨 CHECK: Apakah device_id sudah pernah submit untuk event ini?
+    const { data: existingSubmission, error: checkError } = await supabase
+      .from('kehadiran_tamu')
+      .select('id, nama_lengkap, created_at')
+      .eq('buku_tamu_id', event.id)
+      .eq('device_id', device_id)
+      .single();
+    
+    if (existingSubmission) {
+      return res.status(409).json({ 
+        error: 'Device ini sudah pernah mengisi buku tamu untuk event ini',
+        existing_submission: {
+          nama_lengkap: existingSubmission.nama_lengkap,
+          submitted_at: existingSubmission.created_at
+        }
+      });
+    }
+
+    // Insert data kehadiran tamu dengan device_id
     const { data: kehadiran, error: kehadiranError } = await supabase
       .from('kehadiran_tamu')
       .insert([{
         buku_tamu_id: event.id,
+        device_id: device_id, // 👈 PENTING: Simpan device_id
         nama_lengkap,
         instansi: instansi || '',
         jabatan: jabatan || '',
@@ -595,12 +689,12 @@ app.post('/api/public/buku-tamu/:qr_token', upload.array('photos', 5), async (re
 
           if (!allowedTypes.includes(photo.mimetype)) {
             console.error(`Invalid file type: ${photo.mimetype}`);
-            continue; // Skip file ini, lanjut ke file berikutnya
+            continue;
           }
 
           if (photo.size > maxSize) {
             console.error(`File too large: ${photo.size} bytes`);
-            continue; // Skip file ini, lanjut ke file berikutnya
+            continue;
           }
 
           // Upload menggunakan fungsi uploadBuktiTamu
@@ -638,7 +732,6 @@ app.post('/api/public/buku-tamu/:qr_token', upload.array('photos', 5), async (re
 
         } catch (photoError) {
           console.error('Error processing photo:', photoError);
-          // Continue dengan foto lain jika ada error
         }
       }
     }
