@@ -4,9 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-  "start": "node index.js",
-  "dev": "nodemon index.js"
-},
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -25,6 +25,7 @@
     "pdfkit": "^0.17.1",
     "puppeteer": "^24.14.0",
     "qrcode": "^1.5.4",
+    "resend": "^6.0.2",
     "uuid": "^11.1.0"
   },
   "devDependencies": {

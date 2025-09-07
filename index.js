@@ -2221,26 +2221,12 @@ app.delete('/api/admin/surat-keluar/:id', authenticateToken, requireAdmin, async
 });
 
 // 😁 Endpoint untuk admin membuat jadwal acara
-const nodemailer = require("nodemailer");
+const { Resend } = require('resend');
 
-// Setup transporter Gmail (taruh di luar endpoint biar ga bikin ulang tiap request)
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 465, // SSL port
-  secure: true, // SSL
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASSWORD
-  },
-  connectionTimeout: 60000,
-  greetingTimeout: 30000,
-  socketTimeout: 60000,
-  tls: {
-    rejectUnauthorized: false,
-    ciphers: 'SSLv3'
-  }
-});
+// 3. Inisialisasi Resend
+const resend = new Resend(process.env.RESEND_API_KEY);
 
+// 4. Modified API endpoint
 app.post("/api/admin/jadwal-acara/buat", authenticateToken, requireAdmin, async (req, res) => {
     try {
       const {
@@ -2259,7 +2245,7 @@ app.post("/api/admin/jadwal-acara/buat", authenticateToken, requireAdmin, async 
         peserta_target
       } = req.body;
 
-      // VALIDASI INPUT
+      // VALIDASI INPUT (sama seperti sebelumnya)
       if (!nama_acara || !tanggal_mulai || !waktu_mulai || !lokasi || !pic_nama) {
         return res.status(400).json({
           error: "Nama acara, tanggal mulai, waktu mulai, lokasi, dan PIC nama wajib diisi",
@@ -2267,7 +2253,7 @@ app.post("/api/admin/jadwal-acara/buat", authenticateToken, requireAdmin, async 
         });
       }
 
-      // VALIDASI TANGGAL
+      // VALIDASI TANGGAL (sama seperti sebelumnya)
       const startDate = new Date(tanggal_mulai + " " + waktu_mulai);
       const endDate =
         tanggal_selesai && waktu_selesai
@@ -2304,6 +2290,7 @@ app.post("/api/admin/jadwal-acara/buat", authenticateToken, requireAdmin, async 
         created_at: new Date(new Date().getTime() + 7 * 60 * 60 * 1000).toISOString()
       };
 
+      // Insert ke database
       const { data, error } = await supabase
         .from("jadwal_acara")
         .insert([jadwalData])
@@ -2322,28 +2309,60 @@ app.post("/api/admin/jadwal-acara/buat", authenticateToken, requireAdmin, async 
       if (userError) {
         console.error("Gagal ambil data user:", userError);
       } else {
-        // 🔹 Kirim email ke semua user
-        const mailOptions = {
-          from: `"Sistem Surat Pemkot" <${process.env.GMAIL_USER}>`,
-          to: users.map((u) => u.email).join(","), // gabung semua email
-          subject: `📅 Jadwal Acara Baru: ${nama_acara}`,
-          html: `
-            <h2>${nama_acara}</h2>
-            <p><b>Deskripsi:</b> ${deskripsi || "-"} </p>
-            <p><b>Tanggal:</b> ${tanggal_mulai} ${waktu_mulai} 
-               ${tanggal_selesai ? "s/d " + tanggal_selesai + " " + (waktu_selesai || "") : ""}</p>
-            <p><b>Lokasi:</b> ${lokasi}</p>
-            <p><b>PIC:</b> ${pic_nama} (${pic_kontak || "-"})</p>
-            <br/>
-            <p>Silakan cek detail lengkap di <a href="https://sistem-pemkot.local/dashboard">Dashboard</a></p>
-          `
-        };
-
+        // 🔹 Kirim email menggunakan Resend
         try {
-          const info = await transporter.sendMail(mailOptions);
-          console.log("📩 Email info:", info);
-        } catch (err) {
-          console.error("❌ Gagal kirim email notifikasi:", err);
+          const emailData = await resend.emails.send({
+            from: 'Sistem Surat Pemkot <noreply@yourdomain.com>', // 🔹 Ganti dengan domain verified Anda
+            to: users.map((u) => u.email), // Array email langsung
+            subject: `📅 Jadwal Acara Baru: ${nama_acara}`,
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2 style="color: #2563eb; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px;">
+                  📅 ${nama_acara}
+                </h2>
+                
+                <div style="background-color: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                  <p><strong>📝 Deskripsi:</strong> ${deskripsi || "-"}</p>
+                  
+                  <p><strong>📅 Tanggal & Waktu:</strong><br/>
+                     ${tanggal_mulai} pukul ${waktu_mulai}
+                     ${tanggal_selesai && tanggal_selesai !== tanggal_mulai ? 
+                       `s/d ${tanggal_selesai}` : ''} 
+                     ${waktu_selesai ? `pukul ${waktu_selesai}` : ''}
+                  </p>
+                  
+                  <p><strong>📍 Lokasi:</strong> ${lokasi}</p>
+                  
+                  <p><strong>👤 PIC (Person In Charge):</strong><br/>
+                     ${pic_nama} ${pic_kontak ? `(${pic_kontak})` : ''}
+                  </p>
+                  
+                  ${kategori ? `<p><strong>🏷️ Kategori:</strong> ${kategori}</p>` : ''}
+                  
+                  ${prioritas !== 'biasa' ? `<p><strong>⚡ Prioritas:</strong> <span style="color: #dc2626; font-weight: bold;">${prioritas.toUpperCase()}</span></p>` : ''}
+                </div>
+                
+                <div style="text-align: center; margin: 30px 0;">
+                  <a href="https://sistem-pemkot.local/dashboard" 
+                     style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+                    🔗 Lihat Detail di Dashboard
+                  </a>
+                </div>
+                
+                <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;">
+                <p style="color: #6b7280; font-size: 12px; text-align: center;">
+                  Email otomatis dari Sistem Surat Pemkot<br/>
+                  Mohon tidak membalas email ini
+                </p>
+              </div>
+            `
+          });
+
+          console.log("📩 Email berhasil terkirim:", emailData);
+          
+        } catch (emailError) {
+          console.error("❌ Gagal kirim email notifikasi:", emailError);
+          // Email gagal tapi response tetap sukses karena data sudah tersimpan
         }
       }
 
