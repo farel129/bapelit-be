@@ -2223,10 +2223,8 @@ app.delete('/api/admin/surat-keluar/:id', authenticateToken, requireAdmin, async
 // 😁 Endpoint untuk admin membuat jadwal acara
 const { Resend } = require('resend');
 
-// 3. Inisialisasi Resend
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// 4. Modified API endpoint
 app.post("/api/admin/jadwal-acara/buat", authenticateToken, requireAdmin, async (req, res) => {
     try {
       const {
