@@ -2224,7 +2224,7 @@ app.delete('/api/admin/surat-keluar/:id', authenticateToken, requireAdmin, async
 const nodemailer = require("nodemailer");
 
 // Setup transporter Gmail (taruh di luar endpoint biar ga bikin ulang tiap request)
-const transporter = nodemailer.createTransporter({
+const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
   port: 465, // SSL port
   secure: true, // SSL
