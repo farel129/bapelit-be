@@ -2,752 +2,33 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const { createClient } = require('@supabase/supabase-js');
 require('dotenv').config();
 const puppeteer = require('puppeteer');
 const Handlebars = require('handlebars');
 const path = require('path');
 const fs = require('fs');
-const multer = require('multer');
 const axios = require('axios')
-const QRCode = require('qrcode');
-const { v4: uuidv4 } = require('uuid');
+const { Resend } = require('resend');
+//===============================================================================//
+//===============================================================================//
+const { authenticateToken, requireAdmin } = require('./middlewares/authMiddlewares');
+const { supabaseAdmin, supabase } = require('./config/supabase');
+const upload = require('./middlewares/uploadMiddleware');
+const { uploadBuktiTamu, uploadDocumentationFile, uploadToSupabaseStorage } = require('./utils/uploadSupabase');
+//===============================================================================//
+//===============================================================================//
+const bukuTamuRoutes = require('./routes/bukuTamuRoutes')
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// 😁 Supabase client
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
-
-// 😁 Client khusus untuk operasi admin (upload, delete, dll)
-const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  { auth: { persistSession: false } } // penting: jangan persist session
-);
-
-// 😁 Middleware
 app.use(cors());
 app.use(express.json());
 
-// 😁 JWT Secret
 const JWT_SECRET = process.env.JWT_SECRET || 'bapelit123';
 
-// 😁 Auth Middleware
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+app.use('/api/v1/buku-tamu', bukuTamuRoutes)
 
-  if (!token) {
-    return res.status(401).json({ error: 'Access token required' });
-  }
-
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      return res.status(403).json({ error: 'Invalid token' });
-    }
-    req.user = user;
-    next();
-  });
-};
-
-// 😁 Admin Middleware
-const requireAdmin = (req, res, next) => {
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
-  next();
-};
-
-// 😁 Setup multer untuk upload multiple files
-const storage = multer.memoryStorage();
-
-// 😁 Filter file - hanya izinkan gambar dan pdf
-const fileFilter = (req, file, cb) => {
-  // Izinkan tipe file gambar dan PDF
-  const allowedImageTypes = /jpeg|jpg|png|gif|webp/;
-  const isImage = allowedImageTypes.test(path.extname(file.originalname).toLowerCase()) &&
-    allowedImageTypes.test(file.mimetype);
-
-  const isPdf = file.mimetype === 'application/pdf' &&
-    path.extname(file.originalname).toLowerCase() === '.pdf';
-
-  if (isImage || isPdf) {
-    return cb(null, true);
-  } else {
-    cb(new Error('Hanya file gambar (JPEG, JPG, PNG, GIF, WEBP) dan PDF yang diizinkan!'));
-  }
-};
-
-const upload = multer({
-  storage: storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB
-    files: 10
-  },
-  fileFilter: fileFilter
-});
-
-// ===== FUNGSI HELPER UPLOAD KE SUPABASE =====
-const uploadToSupabaseStorage = async (file, folder = 'surat-masuk', userToken) => {
-  const fileExt = path.extname(file.originalname);
-  const fileName = `${folder}/${Date.now()}-${Math.round(Math.random() * 1E9)}${fileExt}`;
-
-  const { data, error } = await supabaseAdmin.storage
-    .from('surat-photos')
-    .upload(fileName, file.buffer, {
-      contentType: file.mimetype,
-      upsert: false
-    });
-
-  if (error) {
-    console.log('Supabase storage error:', error);
-    throw new Error(`Upload failed: ${error.message}. Details: ${JSON.stringify(error)}`);
-  }
-
-  // Get public URL
-  const { data: { publicUrl } } = supabase.storage
-    .from('surat-photos')
-    .getPublicUrl(fileName);
-
-  return {
-    fileName: data.path,
-    publicUrl: publicUrl,
-    size: file.size,
-    originalName: file.originalname,
-    mimetype: file.mimetype // tambahkan mimetype untuk identifikasi tipe file
-  };
-};
-
-// Helper function upload ke Supabase (disesuaikan untuk dokumentasi)
-const uploadDocumentationFile = async (file, folder = 'dokumentasi', userToken) => {
-  const fileExt = path.extname(file.originalname);
-  const fileName = `${folder}/${Date.now()}-${Math.round(Math.random() * 1E9)}${fileExt}`;
-
-  console.log('Uploading documentation file:', fileName);
-
-  const { data, error } = await supabaseAdmin.storage
-    .from('documentation-storage')
-    .upload(fileName, file.buffer, {
-      contentType: file.mimetype,
-      upsert: false
-    });
-
-  if (error) {
-    console.log('Supabase storage error:', error);
-    throw new Error(`Upload failed: ${error.message}`);
-  }
-
-  // Get public URL
-  const { data: { publicUrl } } = supabase.storage
-    .from('documentation-storage')
-    .getPublicUrl(fileName);
-
-  return {
-    fileName: data.path,
-    publicUrl: publicUrl,
-    size: file.size,
-    originalName: file.originalname,
-    mimetype: file.mimetype
-  };
-};
-
-const uploadBuktiTamu = async (file, folder = 'bukti-tamu', userToken) => {
-  const fileExt = path.extname(file.originalname);
-  const fileName = `${folder}/${Date.now()}-${Math.round(Math.random() * 1E9)}${fileExt}`;
-
-  console.log('Uploading bukti foto tamu:', fileName);
-
-  const { data, error } = await supabaseAdmin.storage
-    .from('buku-tamu')
-    .upload(fileName, file.buffer, {
-      contentType: file.mimetype,
-      upsert: false
-    });
-
-  if (error) {
-    console.log('Supabase storage error:', error);
-    throw new Error(`Upload failed: ${error.message}`);
-  }
-
-  // Get public URL - gunakan supabaseAdmin untuk konsistensi
-  const { data: { publicUrl } } = supabaseAdmin.storage
-    .from('buku-tamu')
-    .getPublicUrl(fileName);
-
-  return {
-    fileName: data.path,
-    publicUrl: publicUrl,
-    size: file.size,
-    originalName: file.originalname,
-    mimetype: file.mimetype
-  };
-};
-
-// ========= buat qr untuk tamu ========= //
-function generateQRToken() {
-  return uuidv4().replace(/-/g, '').substring(0, 16);
-}
-
-app.post('/api/admin/buku-tamu', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    const { nama_acara, tanggal_acara, lokasi, deskripsi } = req.body;
-
-    // Validasi input
-    if (!nama_acara || !tanggal_acara || !lokasi) {
-      return res.status(400).json({ 
-        error: 'Nama acara, tanggal, dan lokasi harus diisi' 
-      });
-    }
-
-    // Generate unique QR token
-    const qr_token = generateQRToken();
-    
-    // Insert ke database
-    const { data, error } = await supabase
-      .from('buku_tamu')
-      .insert([{
-        nama_acara,
-        tanggal_acara,
-        lokasi,
-        deskripsi: deskripsi || '',
-        qr_token,
-        created_by: req.user.id,
-        status: 'active'
-      }])
-      .select();
-
-    if (error) {
-      console.error('Supabase error:', error);
-      return res.status(500).json({ error: error.message });
-    }
-
-    // Generate QR Code
-    const qrUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/guest/${qr_token}`;
-    const qrCodeDataURL = await QRCode.toDataURL(qrUrl);
-
-    res.status(201).json({
-      message: 'Buku tamu berhasil dibuat',
-      event: data[0],
-      qr_code: qrCodeDataURL,
-      guest_url: qrUrl
-    });
-
-  } catch (error) {
-    console.error('Server error:', error);
-    res.status(500).json({ error: 'Gagal membuat buku tamu' });
-  }
-});
-
-app.get('/api/admin/buku-tamu', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    const { page = 1, limit = 10, status, search } = req.query;
-    const offset = (page - 1) * limit;
-
-    let query = supabase
-      .from('buku_tamu')
-      .select(`
-        *,
-        kehadiran_tamu(count)
-      `)
-      .order('created_at', { ascending: false });
-
-    // Filter berdasarkan status jika ada
-    if (status && ['active', 'inactive'].includes(status)) {
-      query = query.eq('status', status);
-    }
-
-    // Search berdasarkan nama acara atau lokasi
-    if (search) {
-      query = query.or(`nama_acara.ilike.%${search}%,lokasi.ilike.%${search}%`);
-    }
-
-    // Pagination
-    query = query.range(offset, offset + limit - 1);
-
-    const { data, error, count } = await query;
-
-    if (error) {
-      console.error('Supabase error:', error);
-      return res.status(500).json({ error: error.message });
-    }
-
-    res.json({
-      message: 'Data buku tamu berhasil diambil',
-      data: data,
-      pagination: {
-        current_page: parseInt(page),
-        total_pages: Math.ceil(count / limit),
-        total_items: count,
-        items_per_page: parseInt(limit)
-      }
-    });
-
-  } catch (error) {
-    console.error('Server error:', error);
-    res.status(500).json({ error: 'Gagal mengambil data buku tamu' });
-  }
-});
-
-app.get('/api/admin/buku-tamu/:id/tamu', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { page = 1, limit = 10, search } = req.query;
-    const offset = (page - 1) * limit;
-
-    // Cek apakah buku tamu exists
-    const { data: bukuTamu, error: bukuTamuError } = await supabase
-      .from('buku_tamu')
-      .select('id, nama_acara, tanggal_acara, lokasi')
-      .eq('id', id)
-      .single();
-
-    if (bukuTamuError || !bukuTamu) {
-      return res.status(404).json({ error: 'Buku tamu tidak ditemukan' });
-    }
-
-    let query = supabase
-      .from('kehadiran_tamu')
-      .select(`
-        *,
-        foto_kehadiran_tamu(
-          id,
-          file_url,
-          file_name,
-          original_name,
-          file_size,
-          mime_type
-        )
-      `)
-      .eq('buku_tamu_id', id)
-      .order('check_in_time', { ascending: false });
-
-    // Search berdasarkan nama atau instansi
-    if (search) {
-      query = query.or(`nama_lengkap.ilike.%${search}%,instansi.ilike.%${search}%`);
-    }
-
-    // Pagination
-    query = query.range(offset, offset + limit - 1);
-
-    const { data: tamu, error: tamuError, count } = await query;
-
-    if (tamuError) {
-      console.error('Supabase error:', tamuError);
-      return res.status(500).json({ error: tamuError.message });
-    }
-
-    res.json({
-      message: 'Data tamu berhasil diambil',
-      buku_tamu: bukuTamu,
-      data: tamu,
-      pagination: {
-        current_page: parseInt(page),
-        total_pages: Math.ceil(count / limit),
-        total_items: count,
-        items_per_page: parseInt(limit)
-      }
-    });
-
-  } catch (error) {
-    console.error('Server error:', error);
-    res.status(500).json({ error: 'Gagal mengambil data tamu' });
-  }
-});
-
-app.patch('/api/admin/buku-tamu/:id/status', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
-
-    // Validasi status
-    if (!status || !['active', 'inactive'].includes(status)) {
-      return res.status(400).json({ 
-        error: 'Status harus berupa "active" atau "inactive"' 
-      });
-    }
-
-    const { data, error } = await supabase
-      .from('buku_tamu')
-      .update({ 
-        status,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', id)
-      .select();
-
-    if (error) {
-      console.error('Supabase error:', error);
-      return res.status(500).json({ error: error.message });
-    }
-
-    if (!data || data.length === 0) {
-      return res.status(404).json({ error: 'Buku tamu tidak ditemukan' });
-    }
-
-    res.json({
-      message: `Status buku tamu berhasil diubah menjadi ${status}`,
-      data: data[0]
-    });
-
-  } catch (error) {
-    console.error('Server error:', error);
-    res.status(500).json({ error: 'Gagal mengubah status buku tamu' });
-  }
-});
-
-// 4. Admin: Hapus buku tamu
-app.delete('/api/admin/buku-tamu/:id', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    // Hapus buku tamu (cascade akan menghapus kehadiran_tamu dan foto_kehadiran_tamu)
-    const { data, error } = await supabase
-      .from('buku_tamu')
-      .delete()
-      .eq('id', id)
-      .select();
-
-    if (error) {
-      console.error('Supabase error:', error);
-      return res.status(500).json({ error: error.message });
-    }
-
-    if (!data || data.length === 0) {
-      return res.status(404).json({ error: 'Buku tamu tidak ditemukan' });
-    }
-
-    res.json({
-      message: 'Buku tamu berhasil dihapus',
-      deleted_event: data[0]
-    });
-
-  } catch (error) {
-    console.error('Server error:', error);
-    res.status(500).json({ error: 'Gagal menghapus buku tamu' });
-  }
-});
-
-app.delete('/api/admin/foto-tamu/:foto_id', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    const { foto_id } = req.params;
-
-    // Get foto data terlebih dahulu
-    const { data: foto, error: fotoError } = await supabase
-      .from('foto_kehadiran_tamu')
-      .select('*')
-      .eq('id', foto_id)
-      .single();
-
-    if (fotoError || !foto) {
-      return res.status(404).json({ error: 'Foto tidak ditemukan' });
-    }
-
-    // Extract file name dari file_url atau gunakan file_name langsung
-    let fileName = foto.file_name;
-    
-    // Jika file_name kosong, extract dari file_url
-    if (!fileName && foto.file_url) {
-      const urlParts = foto.file_url.split('/');
-      const bucketIndex = urlParts.findIndex(part => part === 'buku-tamu');
-      if (bucketIndex !== -1 && bucketIndex < urlParts.length - 1) {
-        // Ambil path setelah bucket name
-        fileName = urlParts.slice(bucketIndex + 1).join('/');
-      }
-    }
-
-    console.log('Attempting to delete file:', fileName);
-
-    // Hapus file dari Supabase Storage terlebih dahulu
-    let storageDeleteSuccess = false;
-    if (fileName) {
-      try {
-        const { error: storageError } = await supabaseAdmin.storage
-          .from('buku-tamu')
-          .remove([fileName]);
-
-        if (storageError) {
-          console.error('Storage delete error:', storageError);
-
-        } else {
-          storageDeleteSuccess = true;
-          console.log('File successfully deleted from storage:', fileName);
-        }
-      } catch (storageError) {
-        console.error('Storage delete exception:', storageError);
-        // Lanjutkan ke penghapusan database
-      }
-    }
-
-    // Hapus record dari database
-    const { error: deleteError } = await supabase
-      .from('foto_kehadiran_tamu')
-      .delete()
-      .eq('id', foto_id);
-
-    if (deleteError) {
-      console.error('Database delete error:', deleteError);
-      return res.status(500).json({ error: deleteError.message });
-    }
-
-    // Response dengan informasi lengkap
-    res.json({
-      message: 'Foto tamu berhasil dihapus',
-      deleted_photo: {
-        id: foto.id,
-        file_name: foto.file_name,
-        original_name: foto.original_name,
-        file_url: foto.file_url
-      },
-      storage_deleted: storageDeleteSuccess,
-      file_path_used: fileName
-    });
-
-  } catch (error) {
-    console.error('Server error:', error);
-    res.status(500).json({ error: 'Gagal menghapus foto tamu' });
-  }
-});
-
-// TAMBAHKAN API BARU: Check apakah device sudah pernah submit
-app.post('/api/public/buku-tamu/:qr_token/check-device', async (req, res) => {
-  try {
-    const { qr_token } = req.params;
-    const { device_id } = req.body;
-    
-    if (!device_id) {
-      return res.status(400).json({ 
-        error: 'Device ID required' 
-      });
-    }
-    
-    // 1. Get event info
-    const { data: event, error: eventError } = await supabase
-      .from('buku_tamu')
-      .select('id, nama_acara, lokasi, tanggal_acara, deskripsi, status')
-      .eq('qr_token', qr_token)
-      .eq('status', 'active')
-      .single();
-      
-    if (eventError || !event) {
-      return res.status(404).json({ 
-        error: 'Buku tamu tidak ditemukan atau sudah tidak aktif' 
-      });
-    }
-    
-    // 2. Check submission by device_id
-    const { data: kehadiran, error: checkError } = await supabase
-      .from('kehadiran_tamu')
-      .select(`
-        id, 
-        nama_lengkap, 
-        instansi, 
-        jabatan, 
-        keperluan, 
-        check_in_time,
-        created_at
-      `)
-      .eq('buku_tamu_id', event.id)
-      .eq('device_id', device_id)
-      .single();
-    
-    if (kehadiran) {
-      // Device sudah pernah submit
-      res.json({
-        hasSubmitted: true,
-        event: event,
-        submission: {
-          nama_lengkap: kehadiran.nama_lengkap,
-          instansi: kehadiran.instansi,
-          jabatan: kehadiran.jabatan,
-          keperluan: kehadiran.keperluan,
-          submitted_at: kehadiran.created_at,
-          check_in_time: kehadiran.check_in_time
-        }
-      });
-    } else {
-      // Device belum pernah submit
-      res.json({
-        hasSubmitted: false,
-        event: event
-      });
-    }
-    
-  } catch (error) {
-    console.error('Check device submission error:', error);
-    res.status(500).json({ 
-      error: 'Internal server error' 
-    });
-  }
-});
-
-app.get('/api/public/buku-tamu/:qr_token', async (req, res) => {
-  try {
-    const { qr_token } = req.params;
-
-    const { data, error } = await supabase
-      .from('buku_tamu')
-      .select('id, nama_acara, tanggal_acara, lokasi, deskripsi, status')
-      .eq('qr_token', qr_token)
-      .eq('status', 'active')
-      .single();
-
-    if (error || !data) {
-      return res.status(404).json({ 
-        error: 'buku tamu tidak ditemukan atau sudah tidak aktif' 
-      });
-    }
-
-    res.json({
-      message: 'Info acara berhasil diambil',
-      event: data
-    });
-
-  } catch (error) {
-    console.error('Server error:', error);
-    res.status(500).json({ error: 'Gagal mengambil info acara' });
-  }
-});
-
-// GANTI: API POST yang existing dengan yang ini
-app.post('/api/public/buku-tamu/:qr_token', upload.array('photos', 5), async (req, res) => {
-  try {
-    const { qr_token } = req.params;
-    const { nama_lengkap, instansi, jabatan, keperluan, device_id } = req.body;
-    const photos = req.files;
-
-    // Validasi input
-    if (!nama_lengkap || !device_id) {
-      return res.status(400).json({ 
-        error: 'Nama lengkap dan device ID harus diisi' 
-      });
-    }
-
-    // Cek apakah buku tamu exists dan active
-    const { data: event, error: eventError } = await supabase
-      .from('buku_tamu')
-      .select('id')
-      .eq('qr_token', qr_token)
-      .eq('status', 'active')
-      .single();
-
-    if (eventError || !event) {
-      return res.status(404).json({ 
-        error: 'Event tidak ditemukan atau sudah tidak aktif' 
-      });
-    }
-
-    // 🚨 CHECK: Apakah device_id sudah pernah submit untuk event ini?
-    const { data: existingSubmission, error: checkError } = await supabase
-      .from('kehadiran_tamu')
-      .select('id, nama_lengkap, created_at')
-      .eq('buku_tamu_id', event.id)
-      .eq('device_id', device_id)
-      .single();
-    
-    if (existingSubmission) {
-      return res.status(409).json({ 
-        error: 'Device ini sudah pernah mengisi buku tamu untuk event ini',
-        existing_submission: {
-          nama_lengkap: existingSubmission.nama_lengkap,
-          submitted_at: existingSubmission.created_at
-        }
-      });
-    }
-
-    // Insert data kehadiran tamu dengan device_id
-    const { data: kehadiran, error: kehadiranError } = await supabase
-      .from('kehadiran_tamu')
-      .insert([{
-        buku_tamu_id: event.id,
-        device_id: device_id, // 👈 PENTING: Simpan device_id
-        nama_lengkap,
-        instansi: instansi || '',
-        jabatan: jabatan || '',
-        keperluan: keperluan || ''
-      }])
-      .select();
-
-    if (kehadiranError) {
-      console.error('Supabase error:', kehadiranError);
-      return res.status(500).json({ error: kehadiranError.message });
-    }
-
-    const kehadiranId = kehadiran[0].id;
-    const uploadedPhotos = [];
-
-    // Process uploaded photos jika ada
-    if (photos && photos.length > 0) {
-      for (const photo of photos) {
-        try {
-          // Validasi file
-          const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png'];
-          const maxSize = 5 * 1024 * 1024; // 5MB
-
-          if (!allowedTypes.includes(photo.mimetype)) {
-            console.error(`Invalid file type: ${photo.mimetype}`);
-            continue;
-          }
-
-          if (photo.size > maxSize) {
-            console.error(`File too large: ${photo.size} bytes`);
-            continue;
-          }
-
-          // Upload menggunakan fungsi uploadBuktiTamu
-          const uploadResult = await uploadBuktiTamu(photo, 'bukti-tamu');
-
-          // Simpan info foto ke database
-          const { data: fotoData, error: fotoError } = await supabase
-            .from('foto_kehadiran_tamu')
-            .insert([{
-              kehadiran_tamu_id: kehadiranId,
-              file_url: uploadResult.publicUrl,
-              file_name: uploadResult.fileName,
-              original_name: uploadResult.originalName,
-              file_size: uploadResult.size,
-              mime_type: uploadResult.mimetype
-            }])
-            .select();
-
-          if (fotoError) {
-            console.error('Error saving photo info:', fotoError);
-            // Jika gagal simpan ke DB, hapus file dari storage
-            try {
-              await supabaseAdmin.storage
-                .from('buku-tamu')
-                .remove([uploadResult.fileName]);
-            } catch (removeError) {
-              console.error('Error removing uploaded file:', removeError);
-            }
-          } else {
-            uploadedPhotos.push({
-              ...fotoData[0],
-              public_url: uploadResult.publicUrl
-            });
-          }
-
-        } catch (photoError) {
-          console.error('Error processing photo:', photoError);
-        }
-      }
-    }
-
-    res.status(201).json({
-      message: 'Kehadiran berhasil dicatat',
-      attendance: kehadiran[0],
-      uploaded_photos: uploadedPhotos,
-      photo_count: uploadedPhotos.length
-    });
-
-  } catch (error) {
-    console.error('Server error:', error);
-    res.status(500).json({ error: 'Gagal mencatat kehadiran' });
-  }
-});
 
 // ===== 1. BUAT POST DOKUMENTASI =====
 app.post('/api/dokumentasi/post', authenticateToken, upload.array('files', 5), async (req, res) => {
@@ -2221,118 +1502,118 @@ app.delete('/api/admin/surat-keluar/:id', authenticateToken, requireAdmin, async
 });
 
 // 😁 Endpoint untuk admin membuat jadwal acara
-const { Resend } = require('resend');
+
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 app.post("/api/admin/jadwal-acara/buat", authenticateToken, requireAdmin, async (req, res) => {
-    try {
-      const {
-        nama_acara,
-        deskripsi,
-        tanggal_mulai,
-        tanggal_selesai,
-        waktu_mulai,
-        waktu_selesai,
-        lokasi,
-        pic_nama,
-        pic_kontak,
-        kategori = "",
-        status = "aktif",
-        prioritas = "biasa",
-        peserta_target
-      } = req.body;
+  try {
+    const {
+      nama_acara,
+      deskripsi,
+      tanggal_mulai,
+      tanggal_selesai,
+      waktu_mulai,
+      waktu_selesai,
+      lokasi,
+      pic_nama,
+      pic_kontak,
+      kategori = "",
+      status = "aktif",
+      prioritas = "biasa",
+      peserta_target
+    } = req.body;
 
-      // VALIDASI INPUT (sama seperti sebelumnya)
-      if (!nama_acara || !tanggal_mulai || !waktu_mulai || !lokasi || !pic_nama) {
-        return res.status(400).json({
-          error: "Nama acara, tanggal mulai, waktu mulai, lokasi, dan PIC nama wajib diisi",
-          received: { nama_acara, tanggal_mulai, waktu_mulai, lokasi, pic_nama }
-        });
-      }
+    // VALIDASI INPUT (sama seperti sebelumnya)
+    if (!nama_acara || !tanggal_mulai || !waktu_mulai || !lokasi || !pic_nama) {
+      return res.status(400).json({
+        error: "Nama acara, tanggal mulai, waktu mulai, lokasi, dan PIC nama wajib diisi",
+        received: { nama_acara, tanggal_mulai, waktu_mulai, lokasi, pic_nama }
+      });
+    }
 
-      // VALIDASI TANGGAL (sama seperti sebelumnya)
-      const startDate = new Date(tanggal_mulai + " " + waktu_mulai);
-      const endDate =
-        tanggal_selesai && waktu_selesai
-          ? new Date(tanggal_selesai + " " + waktu_selesai)
-          : null;
+    // VALIDASI TANGGAL (sama seperti sebelumnya)
+    const startDate = new Date(tanggal_mulai + " " + waktu_mulai);
+    const endDate =
+      tanggal_selesai && waktu_selesai
+        ? new Date(tanggal_selesai + " " + waktu_selesai)
+        : null;
 
-      if (startDate < new Date()) {
-        return res.status(400).json({
-          error: "Tanggal dan waktu mulai tidak boleh di masa lalu"
-        });
-      }
+    if (startDate < new Date()) {
+      return res.status(400).json({
+        error: "Tanggal dan waktu mulai tidak boleh di masa lalu"
+      });
+    }
 
-      if (endDate && endDate <= startDate) {
-        return res.status(400).json({
-          error: "Tanggal dan waktu selesai harus setelah waktu mulai"
-        });
-      }
+    if (endDate && endDate <= startDate) {
+      return res.status(400).json({
+        error: "Tanggal dan waktu selesai harus setelah waktu mulai"
+      });
+    }
 
-      const jadwalData = {
-        nama_acara,
-        deskripsi: deskripsi || "",
-        tanggal_mulai,
-        tanggal_selesai: tanggal_selesai || tanggal_mulai,
-        waktu_mulai,
-        waktu_selesai: waktu_selesai || null,
-        lokasi,
-        pic_nama,
-        pic_kontak: pic_kontak || "",
-        kategori,
-        status,
-        prioritas,
-        peserta_target: peserta_target || null,
-        created_by: req.user.id,
-        created_at: new Date(new Date().getTime() + 7 * 60 * 60 * 1000).toISOString()
-      };
+    const jadwalData = {
+      nama_acara,
+      deskripsi: deskripsi || "",
+      tanggal_mulai,
+      tanggal_selesai: tanggal_selesai || tanggal_mulai,
+      waktu_mulai,
+      waktu_selesai: waktu_selesai || null,
+      lokasi,
+      pic_nama,
+      pic_kontak: pic_kontak || "",
+      kategori,
+      status,
+      prioritas,
+      peserta_target: peserta_target || null,
+      created_by: req.user.id,
+      created_at: new Date(new Date().getTime() + 7 * 60 * 60 * 1000).toISOString()
+    };
 
-      // Insert ke database
-      const { data, error } = await supabase
-        .from("jadwal_acara")
-        .insert([jadwalData])
-        .select()
-        .single();
+    // Insert ke database
+    const { data, error } = await supabase
+      .from("jadwal_acara")
+      .insert([jadwalData])
+      .select()
+      .single();
 
-      if (error) {
-        return res.status(400).json({ error: error.message });
-      }
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
 
-      // 🔹 Ambil semua email user dari tabel users
-      const { data: users, error: userError } = await supabase
-        .from("users")
-        .select("email");
+    // 🔹 Ambil semua email user dari tabel users
+    const { data: users, error: userError } = await supabase
+      .from("users")
+      .select("email");
 
-      if (userError) {
-        console.error("Gagal ambil data user:", userError);
-      } else {
-        // 🔹 Kirim email menggunakan Resend (Individual Sending)
-        try {
-          // Debug: tampilkan raw data dari database
-          console.log("🗄️ Raw users from DB:", users);
-          console.log("📧 Email fields:", users.map(u => ({ email: u.email, type: typeof u.email })));
+    if (userError) {
+      console.error("Gagal ambil data user:", userError);
+    } else {
+      // 🔹 Kirim email menggunakan Resend (Individual Sending)
+      try {
+        // Debug: tampilkan raw data dari database
+        console.log("🗄️ Raw users from DB:", users);
+        console.log("📧 Email fields:", users.map(u => ({ email: u.email, type: typeof u.email })));
 
-          // Filter dan validasi email addresses
-          const validEmails = users
-            .map(u => u.email)
-            .filter(email => email && typeof email === 'string')
-            .map(email => email.trim())
-            .filter(email => email.includes('@') && email.includes('.'))
-            .filter(email => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
+        // Filter dan validasi email addresses
+        const validEmails = users
+          .map(u => u.email)
+          .filter(email => email && typeof email === 'string')
+          .map(email => email.trim())
+          .filter(email => email.includes('@') && email.includes('.'))
+          .filter(email => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
 
-          if (validEmails.length === 0) {
-            console.log("⚠️ Tidak ada email valid untuk dikirim");
-          } else {
-            console.log(`📧 Mengirim ke ${validEmails.length} email valid:`, validEmails);
+        if (validEmails.length === 0) {
+          console.log("⚠️ Tidak ada email valid untuk dikirim");
+        } else {
+          console.log(`📧 Mengirim ke ${validEmails.length} email valid:`, validEmails);
 
-            // Send email ke setiap user individual
-            const emailPromises = validEmails.map(email => 
-              resend.emails.send({
-                from: 'Sistem Pemkot <onboarding@resend.dev>', // Nama sender yang jelas
-                to: [email], // Array dengan single email
-                subject: `[SISTEM PEMKOT] 📅 Jadwal Acara Baru: ${nama_acara}`,
-                text: `JADWAL ACARA BARU
+          // Send email ke setiap user individual
+          const emailPromises = validEmails.map(email =>
+            resend.emails.send({
+              from: 'Sistem Pemkot <onboarding@resend.dev>', // Nama sender yang jelas
+              to: [email], // Array dengan single email
+              subject: `[SISTEM PEMKOT] 📅 Jadwal Acara Baru: ${nama_acara}`,
+              text: `JADWAL ACARA BARU
 
 Nama Acara: ${nama_acara}
 Deskripsi: ${deskripsi || "Tidak ada deskripsi"}
@@ -2349,8 +1630,8 @@ Lihat detail lengkap di: https://sistem-pemkot.local/dashboard
 ---
 Email otomatis dari Sistem Surat Pemkot
 Mohon tidak membalas email ini`, // Plain text version
-                subject: `[SISTEM PEMKOT] 📅 Jadwal Acara Baru: ${nama_acara}`,
-                html: `
+              subject: `[SISTEM PEMKOT] 📅 Jadwal Acara Baru: ${nama_acara}`,
+              html: `
                   <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
                     <div style="text-align: center; margin-bottom: 30px;">
                       <h1 style="color: #2563eb; margin: 0; font-size: 24px;">
@@ -2373,8 +1654,8 @@ Mohon tidak membalas email ini`, // Plain text version
                         <strong style="color: #374151;">📅 Tanggal & Waktu:</strong><br/>
                         <span style="color: #059669; font-weight: 600;">
                           ${tanggal_mulai} pukul ${waktu_mulai}
-                          ${tanggal_selesai && tanggal_selesai !== tanggal_mulai ? 
-                            `<br/>s/d ${tanggal_selesai}` : ''} 
+                          ${tanggal_selesai && tanggal_selesai !== tanggal_mulai ?
+                  `<br/>s/d ${tanggal_selesai}` : ''} 
                           ${waktu_selesai ? ` pukul ${waktu_selesai}` : ''}
                         </span>
                       </div>
@@ -2426,80 +1707,80 @@ Mohon tidak membalas email ini`, // Plain text version
                       <p style="color: #9ca3af; font-size: 13px; margin: 0; line-height: 1.5;">
                         📧 Email otomatis dari <strong>Sistem Surat Pemkot</strong><br/>
                         🚫 Mohon tidak membalas email ini<br/>
-                        📅 Dikirim pada ${new Date().toLocaleString('id-ID', { 
-                          timeZone: 'Asia/Jakarta',
-                          year: 'numeric',
-                          month: 'long', 
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })} WIB
+                        📅 Dikirim pada ${new Date().toLocaleString('id-ID', {
+                    timeZone: 'Asia/Jakarta',
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })} WIB
                       </p>
                     </div>
                   </div>
                 `
-              })
-            );
+            })
+          );
 
-            // Wait for all emails dengan timeout
-            console.log("🚀 Memulai pengiriman email...");
-            const results = await Promise.allSettled(
-              emailPromises.map(promise => 
-                Promise.race([
-                  promise,
-                  new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Email timeout (30s)')), 30000)
-                  )
-                ])
-              )
-            );
-            
-            const successful = results.filter(r => r.status === 'fulfilled').length;
-            const failed = results.filter(r => r.status === 'rejected').length;
-            
-            console.log(`📊 HASIL PENGIRIMAN EMAIL:`);
-            console.log(`✅ Berhasil: ${successful}`);
-            console.log(`❌ Gagal: ${failed}`);
-            console.log(`📋 Total: ${allEmails.length}`);
-            
-            // Log detailed results
-            results.forEach((result, index) => {
-              const email = allEmails[index];
-              if (result.status === 'fulfilled') {
-                const messageId = result.value?.data?.id || 'unknown';
-                console.log(`✅ SUKSES → ${email} (ID: ${messageId})`);
-              } else {
-                const errorMsg = result.reason?.message || result.reason || 'Unknown error';
-                console.error(`❌ GAGAL → ${email}: ${errorMsg}`);
-              }
-            });
-            
-            // Additional API check
-            if (failed === allEmails.length) {
-              console.error("🚨 SEMUA EMAIL GAGAL! Kemungkinan masalah:");
-              console.error("1. API Key tidak valid");
-              console.error("2. Quota Resend habis");
-              console.error("3. Network issue");
-              console.error("4. Resend service down");
+          // Wait for all emails dengan timeout
+          console.log("🚀 Memulai pengiriman email...");
+          const results = await Promise.allSettled(
+            emailPromises.map(promise =>
+              Promise.race([
+                promise,
+                new Promise((_, reject) =>
+                  setTimeout(() => reject(new Error('Email timeout (30s)')), 30000)
+                )
+              ])
+            )
+          );
+
+          const successful = results.filter(r => r.status === 'fulfilled').length;
+          const failed = results.filter(r => r.status === 'rejected').length;
+
+          console.log(`📊 HASIL PENGIRIMAN EMAIL:`);
+          console.log(`✅ Berhasil: ${successful}`);
+          console.log(`❌ Gagal: ${failed}`);
+          console.log(`📋 Total: ${allEmails.length}`);
+
+          // Log detailed results
+          results.forEach((result, index) => {
+            const email = allEmails[index];
+            if (result.status === 'fulfilled') {
+              const messageId = result.value?.data?.id || 'unknown';
+              console.log(`✅ SUKSES → ${email} (ID: ${messageId})`);
+            } else {
+              const errorMsg = result.reason?.message || result.reason || 'Unknown error';
+              console.error(`❌ GAGAL → ${email}: ${errorMsg}`);
             }
+          });
+
+          // Additional API check
+          if (failed === allEmails.length) {
+            console.error("🚨 SEMUA EMAIL GAGAL! Kemungkinan masalah:");
+            console.error("1. API Key tidak valid");
+            console.error("2. Quota Resend habis");
+            console.error("3. Network issue");
+            console.error("4. Resend service down");
           }
-
-        } catch (emailError) {
-          console.error("❌ Gagal kirim email notifikasi:", emailError);
-          // Email gagal tapi response tetap sukses karena data sudah tersimpan
         }
-      }
 
-      res.status(201).json({
-        message: "Jadwal acara berhasil dibuat dan notifikasi email terkirim",
-        data: data
-      });
-      
-    } catch (error) {
-      console.error("Server error:", error);
-      res.status(500).json({ error: "Gagal membuat jadwal acara" });
+      } catch (emailError) {
+        console.error("❌ Gagal kirim email notifikasi:", emailError);
+        // Email gagal tapi response tetap sukses karena data sudah tersimpan
+      }
     }
+
+    res.status(201).json({
+      message: "Jadwal acara berhasil dibuat dan notifikasi email terkirim",
+      data: data
+    });
+
+  } catch (error) {
+    console.error("Server error:", error);
+    res.status(500).json({ error: "Gagal membuat jadwal acara" });
   }
+}
 );
 
 
