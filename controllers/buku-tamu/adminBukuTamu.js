@@ -1,5 +1,6 @@
 const { supabase, supabaseAdmin } = require("../../config/supabase");
 const { generateQRToken } = require("../../utils/qrGenerator");
+const QRCode = require('qrcode')
 
 const buatBukuTamu = async (req, res) => {
     try {
