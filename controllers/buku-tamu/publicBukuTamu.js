@@ -1,3 +1,4 @@
+const { supabase, supabaseAdmin } = require("../../config/supabase");
 const { uploadBuktiTamu } = require("../../utils/uploadSupabase");
 
 const checkDevice = async (req, res) => {
