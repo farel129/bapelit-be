@@ -23,3 +23,7 @@
 2025-09-11 19:23:00 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"TypeError: fetch failed"}
 2025-09-11 19:26:42 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"TypeError: fetch failed"}
 2025-09-11 19:32:48 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"TypeError: fetch failed"}
+2025-09-11 20:04:39 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"TypeError: fetch failed"}
+2025-09-11 23:46:21 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"TypeError: fetch failed"}
+2025-09-11 23:46:47 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"TypeError: fetch failed"}
+2025-09-11 23:46:50 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"TypeError: fetch failed"}
