@@ -210,3 +210,15 @@
 2025-09-12 15:54:01 [INFO]: Berhasil mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","totalData":3,"pagination":{"page":1,"limit":10,"total":0},"duration":122}
 2025-09-12 15:54:23 [INFO]: Memulai pengambilan daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","query":{"status":"","kategori":"","bulan":"","tahun":"2025","page":1,"limit":10}}
 2025-09-12 15:54:24 [INFO]: Berhasil mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","totalData":3,"pagination":{"page":1,"limit":10,"total":0},"duration":436}
+2025-09-12 16:32:01 [INFO]: Memulai pengambilan daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","query":{"status":"","kategori":"","bulan":"","tahun":"2025","page":1,"limit":10}}
+2025-09-12 16:32:01 [INFO]: Berhasil mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","totalData":3,"pagination":{"page":1,"limit":10,"total":0},"duration":110}
+2025-09-12 18:14:39 [INFO]: Memulai pengambilan daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","query":{"status":"","kategori":"","bulan":"","tahun":"2025","page":1,"limit":10}}
+2025-09-12 18:14:39 [INFO]: Berhasil mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","totalData":3,"pagination":{"page":1,"limit":10,"total":0},"duration":404}
+2025-09-12 18:19:53 [INFO]: Memulai pengambilan daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","query":{"status":"","kategori":"","bulan":"","tahun":"2025","page":1,"limit":10}}
+2025-09-12 18:19:54 [INFO]: Berhasil mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","totalData":3,"pagination":{"page":1,"limit":10,"total":0},"duration":515}
+2025-09-13 05:47:23 [INFO]: Memulai pengambilan daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","query":{"status":"","kategori":"","bulan":"","tahun":"2025","page":1,"limit":10}}
+2025-09-13 05:47:33 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"TypeError: fetch failed"}
+2025-09-13 05:47:52 [INFO]: Memulai pengambilan daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","query":{"status":"","kategori":"","bulan":"","tahun":"2025","page":1,"limit":10}}
+2025-09-13 05:48:02 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"TypeError: fetch failed"}
+2025-09-13 05:48:03 [INFO]: Memulai pengambilan daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","query":{"status":"","kategori":"","bulan":"","tahun":"2025","page":1,"limit":10}}
+2025-09-13 05:48:13 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"TypeError: fetch failed"}
