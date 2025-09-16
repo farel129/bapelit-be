@@ -40,3 +40,19 @@
 2025-09-13 05:47:33 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"TypeError: fetch failed"}
 2025-09-13 05:48:02 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"TypeError: fetch failed"}
 2025-09-13 05:48:13 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"TypeError: fetch failed"}
+2025-09-13 17:25:07 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"date/time field value out of range: \"2025-02-31\""}
+2025-09-13 17:25:19 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"date/time field value out of range: \"2025-02-31\""}
+2025-09-13 17:25:25 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"date/time field value out of range: \"2025-02-31\""}
+2025-09-13 17:25:28 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"date/time field value out of range: \"2025-02-31\""}
+2025-09-15 20:30:10 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"4abdd3e7-f214-44a9-87f4-79279cf520dd","error":"date/time field value out of range: \"2025-04-31\""}
+2025-09-16 08:28:18 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"cf9e5e1a-36e0-414a-90ab-63448de473a6","error":"date/time field value out of range: \"2025-11-31\""}
+2025-09-16 08:28:21 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"cf9e5e1a-36e0-414a-90ab-63448de473a6","error":"date/time field value out of range: \"2025-09-31\""}
+2025-09-16 08:28:36 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"cf9e5e1a-36e0-414a-90ab-63448de473a6","error":"date/time field value out of range: \"2025-09-31\""}
+2025-09-16 08:28:55 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"cf9e5e1a-36e0-414a-90ab-63448de473a6","error":"date/time field value out of range: \"2025-09-31\""}
+2025-09-16 08:29:03 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"cf9e5e1a-36e0-414a-90ab-63448de473a6","error":"date/time field value out of range: \"2025-09-31\""}
+2025-09-16 08:34:09 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"85c1edd5-e5de-4159-a3cf-78ac6d879c79","error":"date/time field value out of range: \"2025-09-31\""}
+2025-09-16 08:35:34 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"85c1edd5-e5de-4159-a3cf-78ac6d879c79","error":"date/time field value out of range: \"2025-09-31\""}
+2025-09-16 08:35:46 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"85c1edd5-e5de-4159-a3cf-78ac6d879c79","error":"date/time field value out of range: \"2025-09-31\""}
+2025-09-16 08:36:10 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"85c1edd5-e5de-4159-a3cf-78ac6d879c79","error":"date/time field value out of range: \"2025-09-31\""}
+2025-09-16 08:36:17 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"85c1edd5-e5de-4159-a3cf-78ac6d879c79","error":"date/time field value out of range: \"2025-09-31\""}
+2025-09-16 08:36:33 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"85c1edd5-e5de-4159-a3cf-78ac6d879c79","error":"date/time field value out of range: \"2025-09-31\""}

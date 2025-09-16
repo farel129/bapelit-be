@@ -1,12 +1,37 @@
 const express = require('express')
 const { authenticateToken } = require('../middlewares/authMiddlewares')
-const { buatDisposisi, getKepalaDisposisiAll, getKepalaDetailDisposisi, deleteDisposisi } = require('../controllers/disposisi/kepalaDisposisi')
-const { getAtasanDisposisi, getAtasanDetailDisposisi, getAtasanFileDisposisi, kabidBacaDisposisi, kabidTerimaDisposisi, sekretarisBacaDisposisi, sekretarisTerimaDisposisi, listBawahan, atasanTeruskanDisposisi, listJabatan } = require('../controllers/disposisi/atasanDisposisi')
-const { getBawahanDisposisi, getBawahanDetailDisposisi, terimaBawahanDisposisi } = require('../controllers/disposisi/bawahanDisposisi')
+
+const { 
+    buatDisposisi, 
+    getKepalaDisposisiAll, 
+    getKepalaDetailDisposisi, 
+    deleteDisposisi 
+} = require('../controllers/disposisi/kepalaDisposisi')
+
+const { 
+    getAtasanDisposisi, 
+    getAtasanDetailDisposisi, 
+    getAtasanFileDisposisi, 
+    kabidBacaDisposisi, 
+    kabidTerimaDisposisi, 
+    sekretarisBacaDisposisi, 
+    sekretarisTerimaDisposisi, 
+    listBawahan, 
+    atasanTeruskanDisposisi, 
+    listJabatan 
+} = require('../controllers/disposisi/atasanDisposisi')
+
+const { 
+    getBawahanDisposisi,
+    getBawahanDetailDisposisi, 
+    terimaBawahanDisposisi 
+} = require('../controllers/disposisi/bawahanDisposisi')
+
 const getDisposisiStatusLog = require('../controllers/disposisi/disposisiStatusLog')
 const getStatistikDisposisi = require('../controllers/disposisi/disposisiStatistik')
 const getLeaderboardDisposisi = require('../controllers/disposisi/disposisiLeaderboard')
 const downloadPdf = require('../controllers/disposisi/pdfGenerator')
+
 const router = express.Router()
 
 router.post('/:suratId', authenticateToken, buatDisposisi)
