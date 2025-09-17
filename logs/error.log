@@ -56,3 +56,5 @@
 2025-09-16 08:36:10 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"85c1edd5-e5de-4159-a3cf-78ac6d879c79","error":"date/time field value out of range: \"2025-09-31\""}
 2025-09-16 08:36:17 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"85c1edd5-e5de-4159-a3cf-78ac6d879c79","error":"date/time field value out of range: \"2025-09-31\""}
 2025-09-16 08:36:33 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"85c1edd5-e5de-4159-a3cf-78ac6d879c79","error":"date/time field value out of range: \"2025-09-31\""}
+2025-09-17 15:17:19 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"f51c30cb-84b2-40a4-a613-4e32839fa014","error":"date/time field value out of range: \"2025-09-31\""}
+2025-09-17 15:17:35 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"date/time field value out of range: \"2025-09-31\""}
