@@ -1,8 +1,6 @@
-const {Resend} = require("resend");
 const { supabase } = require("../../config/supabase");
 const logger = require("../../utils/logger");
 
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 const buatJadwalAcara = async (req, res) => {
     const startTime = Date.now();
@@ -38,24 +36,36 @@ const buatJadwalAcara = async (req, res) => {
         }
 
         // VALIDASI TANGGAL
-        const startDate = new Date(tanggal_mulai + " " + waktu_mulai);
-        const endDate =
-            tanggal_selesai && waktu_selesai
-                ? new Date(tanggal_selesai + " " + waktu_selesai)
-                : null;
+        // VALIDASI TANGGAL
+        // VALIDASI TANGGAL
+const startDate = new Date(tanggal_mulai + " " + waktu_mulai);
+const startDateWIB = new Date(startDate.getTime() + 7 * 60 * 60 * 1000); // konversi ke representasi WIB dalam UTC
+const nowUTC = new Date();
 
-        if (startDate < new Date()) {
-            const errorMsg = "Tanggal dan waktu mulai tidak boleh di masa lalu";
-            logger.warn(errorMsg, { userId, startDate });
-            return res.status(400).json({ error: errorMsg });
-        }
+if (startDateWIB < nowUTC) {
+    const errorMsg = "Tanggal dan waktu mulai tidak boleh di masa lalu";
+    logger.warn(errorMsg, { 
+        userId, 
+        startDate: startDate.toISOString(), 
+        startDateWIB: startDateWIB.toISOString(), 
+        nowUTC: nowUTC.toISOString() 
+    });
+    return res.status(400).json({ error: errorMsg });
+}
 
-        if (endDate && endDate <= startDate) {
-            const errorMsg = "Tanggal dan waktu selesai harus setelah waktu mulai";
-            logger.warn(errorMsg, { userId, startDate, endDate });
-            return res.status(400).json({ error: errorMsg });
-        }
+const endDate =
+    tanggal_selesai && waktu_selesai
+        ? new Date(tanggal_selesai + " " + waktu_selesai)
+        : null;
 
+if (endDate) {
+    const endDateWIB = new Date(endDate.getTime() + 7 * 60 * 60 * 1000);
+    if (endDateWIB <= startDateWIB) {
+        const errorMsg = "Tanggal dan waktu selesai harus setelah waktu mulai";
+        logger.warn(errorMsg, { userId, startDateWIB, endDateWIB });
+        return res.status(400).json({ error: errorMsg });
+    }
+}
         const jadwalData = {
             nama_acara,
             deskripsi: deskripsi || "",
@@ -88,167 +98,16 @@ const buatJadwalAcara = async (req, res) => {
 
         logger.info("Jadwal acara berhasil disimpan", { userId, acaraId: data.id });
 
-        // 🔹 Ambil semua email user dari tabel users
-        const { data: users, error: userError } = await supabase
-            .from("users")
-            .select("email");
-
-        if (userError) {
-            logger.error("Gagal mengambil daftar user untuk notifikasi email", { userId, error: userError.message });
-        } else {
-            const validEmails = users
-                .map(u => u.email)
-                .filter(email => email && typeof email === 'string')
-                .map(email => email.trim())
-                .filter(email => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
-
-            if (validEmails.length === 0) {
-                logger.warn("Tidak ada email valid untuk dikirim", { userId });
-            } else {
-                logger.info(`Mengirim notifikasi ke ${validEmails.length} pengguna`, { userId });
-
-                const emailPromises = validEmails.map(email =>
-                    resend.emails.send({
-                        from: 'Sistem Pemkot <onboarding@resend.dev>',
-                        to: [email],
-                        subject: `[SISTEM PEMKOT] 📅 Jadwal Acara Baru: ${nama_acara}`,
-                        text: `JADWAL ACARA BARU
-
-                        Nama Acara: ${nama_acara}
-                        Deskripsi: ${deskripsi || "Tidak ada deskripsi"}
-                        Tanggal: ${tanggal_mulai} pukul ${waktu_mulai}
-                        ${tanggal_selesai && tanggal_selesai !== tanggal_mulai ? `s/d ${tanggal_selesai}` : ''} 
-                        ${waktu_selesai ? ` pukul ${waktu_selesai}` : ''}
-                        Lokasi: ${lokasi}
-                        PIC: ${pic_nama} ${pic_kontak ? `(${pic_kontak})` : ''}
-                        ${kategori ? `Kategori: ${kategori}` : ''}
-                        ${prioritas !== 'biasa' ? `Prioritas: ${prioritas.toUpperCase()}` : ''}
-                        
-                        Lihat detail lengkap di: https://sistem-pemkot.local/dashboard  
-                        
-                        ---
-                        Email otomatis dari Sistem Surat Pemkot
-                        Mohon tidak membalas email ini`,
-                        html: `
-                      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-                        <div style="text-align: center; margin-bottom: 30px;">
-                          <h1 style="color: #2563eb; margin: 0; font-size: 24px;">
-                            📅 Jadwal Acara Baru
-                          </h1>
-                          <div style="width: 100%; height: 3px; background: linear-gradient(90deg, #2563eb, #3b82f6); margin: 10px 0;"></div>
-                        </div>
-    
-                        <div style="background-color: #f8fafc; padding: 25px; border-radius: 12px; border-left: 4px solid #2563eb; margin-bottom: 25px;">
-                          <h2 style="color: #1e40af; margin: 0 0 15px 0; font-size: 20px;">
-                            ${nama_acara}
-                          </h2>
-                          
-                          <div style="margin-bottom: 15px;">
-                            <strong style="color: #374151;">📝 Deskripsi:</strong><br/>
-                            <span style="color: #6b7280;">${deskripsi || "Tidak ada deskripsi"}</span>
-                          </div>
-                          
-                          <div style="margin-bottom: 15px;">
-                            <strong style="color: #374151;">📅 Tanggal & Waktu:</strong><br/>
-                            <span style="color: #059669; font-weight: 600;">
-                              ${tanggal_mulai} pukul ${waktu_mulai}
-                              ${tanggal_selesai && tanggal_selesai !== tanggal_mulai ?
-                                    `<br/>s/d ${tanggal_selesai}` : ''} 
-                              ${waktu_selesai ? ` pukul ${waktu_selesai}` : ''}
-                            </span>
-                          </div>
-                          
-                          <div style="margin-bottom: 15px;">
-                            <strong style="color: #374151;">📍 Lokasi:</strong><br/>
-                            <span style="color: #dc2626; font-weight: 600;">${lokasi}</span>
-                          </div>
-                          
-                          <div style="margin-bottom: 15px;">
-                            <strong style="color: #374151;">👤 PIC (Person In Charge):</strong><br/>
-                            <span style="color: #7c3aed; font-weight: 600;">
-                              ${pic_nama} ${pic_kontak ? `<br/>📞 ${pic_kontak}` : ''}
-                            </span>
-                          </div>
-                          
-                          ${kategori ? `
-                            <div style="margin-bottom: 15px;">
-                              <strong style="color: #374151;">🏷️ Kategori:</strong>
-                              <span style="background-color: #e5e7eb; padding: 4px 8px; border-radius: 4px; font-size: 12px; color: #374151;">${kategori}</span>
-                            </div>
-                          ` : ''}
-                          
-                          ${prioritas !== 'biasa' ? `
-                            <div style="margin-bottom: 15px;">
-                              <strong style="color: #374151;">⚡ Prioritas:</strong>
-                              <span style="background-color: #fee2e2; color: #dc2626; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 14px; text-transform: uppercase;">
-                                ${prioritas}
-                              </span>
-                            </div>
-                          ` : ''}
-    
-                          ${peserta_target ? `
-                            <div style="margin-bottom: 15px;">
-                              <strong style="color: #374151;">👥 Target Peserta:</strong><br/>
-                              <span style="color: #059669; font-weight: 600;">${peserta_target}</span>
-                            </div>
-                          ` : ''}
-                        </div>
-                        
-                        <div style="text-align: center; margin: 30px 0;">
-                          <a href="https://sistem-pemkot.local/dashboard" 
-                             style="background: linear-gradient(135deg, #2563eb, #3b82f6); color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: 600; box-shadow: 0 4px 6px rgba(37, 99, 235, 0.25);">
-                            🔗 Lihat Detail di Dashboard
-                          </a>
-                        </div>
-                        
-                        <div style="border-top: 2px dashed #e5e7eb; padding-top: 20px; text-align: center;">
-                          <p style="color: #9ca3af; font-size: 13px; margin: 0; line-height: 1.5;">
-                            📧 Email otomatis dari <strong>Sistem Surat Pemkot</strong><br/>
-                            🚫 Mohon tidak membalas email ini<br/>
-                            📅 Dikirim pada ${new Date().toLocaleString('id-ID', {
-                                        timeZone: 'Asia/Jakarta',
-                                        year: 'numeric',
-                                        month: 'long',
-                                        day: 'numeric',
-                                        hour: '2-digit',
-                                        minute: '2-digit'
-                                    })} WIB
-                          </p>
-                        </div>
-                      </div>
-                    `
-                    }).catch(err => ({ email, error: err.message }))
-                );
-
-                const results = await Promise.all(emailPromises);
-                const successful = results.filter(r => !r.error).length;
-                const failed = results.filter(r => r.error).length;
-
-                logger.info(`Pengiriman email selesai`, {
-                    userId,
-                    total: validEmails.length,
-                    successful,
-                    failed,
-                    duration: Date.now() - startTime
-                });
-
-                if (failed > 0) {
-                    logger.warn("Beberapa email gagal dikirim", {
-                        userId,
-                        failedEmails: results.filter(r => r.error).map(r => ({ email: r.email, error: r.error }))
-                    });
-                }
-            }
-        }
-
+        
         logger.info("Permintaan buat jadwal acara berhasil", {
             userId,
             acaraId: data.id,
             duration: Date.now() - startTime
         });
+        
 
         res.status(201).json({
-            message: "Jadwal acara berhasil dibuat dan notifikasi email terkirim",
+            message: "Jadwal acara berhasil dibuat",
             data: data
         });
 
@@ -266,29 +125,29 @@ const buatJadwalAcara = async (req, res) => {
 const getJadwalAcara = async (req, res) => {
     const startTime = Date.now();
     const userId = req.user?.id || 'unknown';
-    const { 
-        status = '', 
-        kategori = '', 
-        bulan = '', 
-        tahun = new Date().getFullYear(), 
-        page = 1, 
-        limit = 10 
+    const {
+        status = '',
+        kategori = '',
+        bulan = '',
+        tahun = new Date().getFullYear(),
+        page = 1,
+        limit = 10
     } = req.query;
 
-    logger.info("Memulai pengambilan daftar jadwal acara", { 
-        userId, 
-        query: { status, kategori, bulan, tahun, page, limit } 
+    logger.info("Memulai pengambilan daftar jadwal acara", {
+        userId,
+        query: { status, kategori, bulan, tahun, page, limit }
     });
 
     try {
         let query = supabase
-            .from('jadwal_acara')
-            .select(`
-                *,
-                creator:created_by(name, email)
-            `)
-            .order('tanggal_mulai', { ascending: true })
-            .order('waktu_mulai', { ascending: true });
+    .from('jadwal_acara')
+    .select(`
+        *,
+        creator:created_by(name, email)
+    `, { count: 'exact' })  // ← TAMBAHKAN INI
+    .order('tanggal_mulai', { ascending: true })
+    .order('waktu_mulai', { ascending: true });
 
         // Filter berdasarkan status
         if (status) {
@@ -301,15 +160,36 @@ const getJadwalAcara = async (req, res) => {
         }
 
         // Filter berdasarkan bulan dan tahun
-        if (bulan && tahun) {
-            const startDate = `${tahun}-${bulan.padStart(2, '0')}-01`;
-            const endDate = `${tahun}-${bulan.padStart(2, '0')}-31`;
-            query = query.gte('tanggal_mulai', startDate).lte('tanggal_mulai', endDate);
-        } else if (tahun) {
-            const startDate = `${tahun}-01-01`;
-            const endDate = `${tahun}-12-31`;
-            query = query.gte('tanggal_mulai', startDate).lte('tanggal_mulai', endDate);
+        // Filter berdasarkan bulan dan tahun
+        // Filter berdasarkan bulan dan tahun
+if (tahun) {
+    const yearNum = parseInt(tahun, 10);
+    if (!isNaN(yearNum)) {
+        if (bulan) {
+            // Filter bulan spesifik dalam tahun
+            const monthNum = parseInt(bulan, 10);
+            if (!isNaN(monthNum) && monthNum >= 1 && monthNum <= 12) {
+                const startDate = new Date(yearNum, monthNum - 1, 1);
+                const endDate = new Date(yearNum, monthNum, 0);
+                const startStr = startDate.toISOString().split('T')[0];
+                const endStr = endDate.toISOString().split('T')[0];
+
+                logger.info("Filter bulan aktif", { startStr, endStr, monthNum, yearNum });
+                query = query.gte('tanggal_mulai', startStr).lte('tanggal_mulai', endStr);
+            }
+            // Jika bulan tidak valid, abaikan — jangan error
+        } else {
+            // Filter seluruh tahun
+            const startOfYear = new Date(yearNum, 0, 1); // 1 Jan
+            const endOfYear = new Date(yearNum, 11, 31); // 31 Des
+            const startStr = startOfYear.toISOString().split('T')[0];
+            const endStr = endOfYear.toISOString().split('T')[0];
+
+            logger.info("Filter tahun aktif", { startStr, endStr, yearNum });
+            query = query.gte('tanggal_mulai', startStr).lte('tanggal_mulai', endStr);
         }
+    }
+}
 
         // Pagination
         const offset = (page - 1) * limit;
@@ -621,11 +501,11 @@ const updateStatusAcara = async (req, res) => {
     }
 };
 
-module.exports = { 
-    buatJadwalAcara, 
-    getJadwalAcara, 
-    getDetailAcara, 
-    updateJadwalAcara, 
-    deleteJadwalAcara, 
-    updateStatusAcara 
+module.exports = {
+    buatJadwalAcara,
+    getJadwalAcara,
+    getDetailAcara,
+    updateJadwalAcara,
+    deleteJadwalAcara,
+    updateStatusAcara
 };
