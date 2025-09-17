@@ -57,7 +57,7 @@ const buatSuratMasuk = async (req, res) => {
         let photoCount = 0;
         if (req.files && req.files.length > 0) {
             const uploadPromises = req.files.map(file =>
-                uploadToSupabaseStorage(file, 'surat-masuk') // menggunakan default bucket 'surat-photos'
+                uploadToSupabaseStorage(file, 'surat-masuk', 'surat-photos')
             );
 
             try {
@@ -75,14 +75,14 @@ const buatSuratMasuk = async (req, res) => {
                 }));
 
                 const { error: fileError } = await supabase
-                    .from('surat_photos') // Pastikan nama tabel benar
+                    .from('surat_photos')
                     .insert(fileData);
 
                 if (fileError) {
                     // Rollback: hapus surat dan files dari storage
                     await supabase.from('surat_masuk').delete().eq('id', suratResult.id);
 
-                    // Hapus files dari Supabase Storage
+                    // Hapus files dari Supabase Storage 
                     const filesToDelete = uploadResults.map(r => r.fileName);
                     await supabase.storage.from('surat-photos').remove(filesToDelete);
 
@@ -113,35 +113,101 @@ const buatSuratMasuk = async (req, res) => {
 
 const getSuratMasuk = async (req, res) => {
     try {
-        const { data, error } = await supabase
+        // Ambil semua surat masuk dengan foto info
+        const { data: allSuratMasuk, error } = await supabase
             .from('surat_masuk')
-            .select(`*`)
+            .select(`
+            *,
+            surat_photos (
+              id,
+              foto_original_name,
+              file_size,
+              foto_path,
+              storage_path
+            )
+          `)
             .order('created_at', { ascending: false });
 
         if (error) {
+            console.error('Error fetching surat masuk:', error);
             return res.status(400).json({ error: error.message });
         }
 
-        // Tambahkan info foto untuk setiap surat
-        const dataWithPhotoInfo = data?.map(surat => ({
-            ...surat,
-            photo_count: surat.surat_photos ? surat.surat_photos.length : 0,
-            has_photos: surat.surat_photos && surat.surat_photos.length > 0,
-            photos: surat.surat_photos?.map(photo => ({
-                id: photo.id,
-                filename: photo.foto_original_name,
-                size: photo.file_size,
-                url: `/api/kepala/surat-masuk/photo/${photo.id}`
-            })) || []
-        })) || [];
+        const dataWithPhotoInfo = allSuratMasuk?.map(surat => {
+            const photos = surat.surat_photos?.map(photo => {
+                let photoUrl = `/api/v1/surat-masuk/photo/${photo.id}`;
+                if (photo.foto_path && photo.foto_path.startsWith('http')) {
+                    photoUrl = photo.foto_path;
+                } else if (photo.storage_path) {
+                    const { data: { publicUrl } } = supabase.storage
+                        .from('surat-photos')
+                        .getPublicUrl(photo.storage_path);
+                    photoUrl = publicUrl;
+                }
+
+                return {
+                    id: photo.id,
+                    filename: photo.foto_original_name,
+                    size: photo.file_size,
+                    url: photoUrl
+                };
+            }) || [];
+
+            return {
+                ...surat,
+                photo_count: photos.length,
+                has_photos: photos.length > 0,
+                photos: photos
+            };
+        }) || [];
 
         res.json({
-            message: 'Berhasil mengambil semua surat masuk',
             data: dataWithPhotoInfo,
-            total: dataWithPhotoInfo.length
+            total: dataWithPhotoInfo.length,
         });
+
     } catch (error) {
+        console.error('Server error:', error);
         res.status(500).json({ error: error.message });
+    }
+}
+
+const getFileSuratMasuk = async (req, res) => {
+    try {
+        const { photoId } = req.params;
+
+        // Query database dengan field yang dibutuhkan saja
+        const { data: photo, error } = await supabase
+            .from('surat_photos')
+            .select('foto_path, storage_path')
+            .eq('id', photoId)
+            .single();
+
+        if (error || !photo) {
+            return res.status(404).json({ error: 'Foto tidak ditemukan' });
+        }
+
+        // Prioritas 1: Jika foto_path sudah berupa URL lengkap
+        if (photo.foto_path && photo.foto_path.startsWith('http')) {
+            return res.redirect(photo.foto_path);
+        }
+
+        // Prioritas 2: Generate public URL dari storage_path
+        if (photo.storage_path) {
+            const { data: { publicUrl } } = supabase.storage
+                .from('surat-photos')
+                .getPublicUrl(photo.storage_path);
+
+            if (publicUrl) {
+                return res.redirect(publicUrl);
+            }
+        }
+
+        // Jika semua metode gagal
+        return res.status(404).json({ error: 'File foto tidak dapat diakses' });
+
+    } catch (error) {
+        res.status(500).json({ error: 'Server error' });
     }
 }
 
@@ -159,4 +225,4 @@ const deleteSuratMasuk = async (req, res) => {
     }
 }
 
-module.exports = { buatSuratMasuk, getSuratMasuk, deleteSuratMasuk }
+module.exports = { buatSuratMasuk, getSuratMasuk, getFileSuratMasuk, deleteSuratMasuk }

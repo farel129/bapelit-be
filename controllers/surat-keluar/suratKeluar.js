@@ -49,9 +49,6 @@ const buatSuratKeluar = async (req, res) => {
         // Upload lampiran ke Supabase Storage
         let lampiranCount = 0;
         if (req.files && req.files.length > 0) {
-            console.log('User info:', req.user);
-            
-            // PERBAIKAN: Gunakan bucket yang benar, bukan authorization token
             const uploadPromises = req.files.map(file =>
                 uploadToSupabaseStorage(file, 'surat-keluar', 'surat-photos') // Perbaikan di sini
             );
@@ -113,37 +110,107 @@ const getSuratKeluarAll = async (req, res) => {
         const { data, error } = await supabase
             .from('surat_keluar')
             .select(`
-        *,
-        surat_keluar_lampiran(*)
-      `)
+                *,
+                surat_keluar_lampiran(*)
+            `)
             .order('created_at', { ascending: false });
 
         if (error) {
             return res.status(400).json({ error: error.message });
         }
 
-        // Tambahkan info lampiran untuk setiap surat
-        const dataWithLampiranInfo = data?.map(surat => ({
-            ...surat,
-            lampiran_count: surat.surat_keluar_lampiran ? surat.surat_keluar_lampiran.length : 0,
-            has_lampiran: surat.surat_keluar_lampiran && surat.surat_keluar_lampiran.length > 0,
-            lampiran: surat.surat_keluar_lampiran?.map(file => ({
-                id: file.id,
-                filename: file.file_original_name,
-                size: file.file_size,
-                url: file.file_path
-            })) || []
-        })) || [];
+        // Proses setiap surat dan lampirannya secara async
+        const dataWithLampiranInfo = await Promise.all(
+            (data || []).map(async (surat) => {
+                const lampiran = surat.surat_keluar_lampiran || [];
+
+                // Proses setiap file lampiran
+                const files = await Promise.all(
+                    lampiran.map(async (file) => {
+                        let fileUrl = `/api/v1/surat-keluar/file/${file.id}`;
+
+                        // Prioritas 1: Jika sudah URL penuh
+                        if (file.file_path && file.file_path.startsWith('http')) {
+                            fileUrl = file.file_path;
+                        }
+                        // Prioritas 2: Jika ada storage_path, generate public URL
+                        else if (file.storage_path) {
+                            const { data: urlData } = await supabase.storage
+                                .from('surat-photos') // ✅ KONSISTEN!
+                                .getPublicUrl(file.storage_path);
+
+                            if (urlData?.publicUrl) {
+                                fileUrl = urlData.publicUrl;
+                            }
+                        }
+
+                        return {
+                            id: file.id,
+                            filename: file.file_original_name,
+                            size: file.file_size,
+                            url: fileUrl,
+                        };
+                    })
+                );
+
+                return {
+                    ...surat,
+                    file_count: files.length,
+                    has_files: files.length > 0,
+                    files: files,
+                };
+            })
+        );
 
         res.json({
-            message: 'Berhasil mengambil semua surat keluar',
             data: dataWithLampiranInfo,
-            total: dataWithLampiranInfo.length
+            total: dataWithLampiranInfo.length,
         });
+
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('Server error in getSuratKeluarAll:', error);
+        res.status(500).json({ error: error.message || 'Internal Server Error' });
     }
-}
+};
+
+const getFileSuratKeluar = async (req, res) => {
+    try {
+        const { fileId } = req.params;
+
+        const { data: file, error } = await supabase
+            .from('surat_keluar_lampiran')
+            .select('file_path, storage_path')
+            .eq('id', fileId)
+            .single();
+
+        if (error || !file) {
+            return res.status(404).json({ error: 'File tidak ditemukan' });
+        }
+
+        // Prioritas 1: Redirect langsung jika file_path adalah URL
+        if (file.file_path && file.file_path.startsWith('http')) {
+            return res.redirect(file.file_path);
+        }
+
+        // Prioritas 2: Generate public URL dari storage
+        if (file.storage_path) {
+            const { data: urlData } = await supabase.storage
+                .from('surat-photos') // ✅ KONSISTEN!
+                .getPublicUrl(file.storage_path);
+
+            if (urlData?.publicUrl) {
+                return res.redirect(urlData.publicUrl);
+            }
+        }
+
+        // Fallback jika tidak ada cara akses file
+        return res.status(404).json({ error: 'File tidak dapat diakses' });
+
+    } catch (error) {
+        console.error('Server error in getFileSuratKeluar:', error);
+        res.status(500).json({ error: 'Terjadi kesalahan server' });
+    }
+};
 
 const deleteSuratKeluar = async (req, res) => {
     const { id } = req.params;
@@ -183,4 +250,4 @@ const deleteSuratKeluar = async (req, res) => {
     }
 }
 
-module.exports = { buatSuratKeluar, getSuratKeluarAll, deleteSuratKeluar }
+module.exports = { buatSuratKeluar, getSuratKeluarAll, deleteSuratKeluar, getFileSuratKeluar }
