@@ -75,3 +75,7 @@ ReferenceError: nowWIB is not defined
 2025-09-18 01:21:48 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"Requested range not satisfiable"}
 2025-09-18 01:22:23 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"Requested range not satisfiable"}
 2025-09-18 01:22:32 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"Requested range not satisfiable"}
+2025-09-18 02:21:36 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"Requested range not satisfiable"}
+2025-09-18 02:22:13 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"Requested range not satisfiable"}
+2025-09-18 02:22:15 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"Requested range not satisfiable"}
+2025-09-18 02:22:24 [ERROR]: Gagal mengambil daftar jadwal acara  {"userId":"c8a96478-3b13-4ef3-b35b-15d9f8ba10da","error":"Requested range not satisfiable"}

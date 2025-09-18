@@ -37,7 +37,16 @@ const buatBukuTamu = async (req, res) => {
 
         // Generate QR Code
         const qrUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/guest/${qr_token}`;
-        const qrCodeDataURL = await QRCode.toDataURL(qrUrl);
+        const qrCodeDataURL = await QRCode.toDataURL(qrUrl, {
+            width: 2000,        // Ukuran besar untuk print
+            margin: 2,          // Margin minimal agar QR tetap terbaca
+            color: {
+                dark: '#000000',  // Warna hitam solid
+                light: '#ffffff'  // Background putih
+            },
+            type: 'image/png',  // Format PNG lebih baik untuk print
+            quality: 1.0        // Kualitas maksimal (untuk PNG, ini opsional)
+        });
 
         res.status(201).json({
             message: 'Buku tamu berhasil dibuat',
