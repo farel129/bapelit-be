@@ -2,7 +2,8 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 
 const { supabase } = require('../../config/supabase');
-const JWT_SECRET = process.env.JWT_SECRET || 'bapelit123';
+const { logger } = require('../../utils/logger');
+const JWT_SECRET = process.env.JWT_SECRET;
 
 
 const login = async (req, res) => {
@@ -17,12 +18,25 @@ const login = async (req, res) => {
             .single();
 
         if (error || !user) {
+            // 🔴 Log: Login gagal — email tidak ditemukan
+            logger.warn('Login gagal: Email tidak ditemukan', {
+                email,
+                ip: req.ip,
+                userAgent: req.get('User-Agent')
+            });
+
             return res.status(400).json({ error: 'Email atau password salah' });
         }
 
         // Verify password
         const isValidPassword = await bcrypt.compare(password, user.password);
         if (!isValidPassword) {
+            logger.warn('Login gagal: Password salah', {
+                email: user.email,
+                userId: user.id,
+                ip: req.ip,
+                userAgent: req.get('User-Agent')
+            });
             return res.status(400).json({ error: 'Email atau password salah' });
         }
 
@@ -52,6 +66,14 @@ const login = async (req, res) => {
             }
         });
     } catch (error) {
+
+        logger.error('Error sistem saat login', {
+            message: error.message,
+            stack: error.stack,
+            email: req.body?.email,
+            ip: req.ip
+        });
+
         res.status(500).json({ error: error.message });
 
     }

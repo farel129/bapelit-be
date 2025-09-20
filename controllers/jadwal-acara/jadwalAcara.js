@@ -1,5 +1,5 @@
 const { supabase } = require("../../config/supabase");
-const logger = require("../../utils/logger");
+const {logger} = require("../../utils/logger");
 
 
 const buatJadwalAcara = async (req, res) => {
