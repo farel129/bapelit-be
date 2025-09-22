@@ -1,4 +1,4 @@
-const { supabase } = require("../../config/supabase");
+const { supabase, supabaseAdmin } = require("../../config/supabase");
 const { uploadToSupabaseStorage } = require("../../utils/uploadSupabase");
 
 const buatSuratKeluar = async (req, res) => {
@@ -229,7 +229,13 @@ const deleteSuratKeluar = async (req, res) => {
         // Hapus file dari storage jika ada
         if (lampiranData && lampiranData.length > 0) {
             const filesToDelete = lampiranData.map(item => item.storage_path);
-            await supabase.storage.from('surat-keluar-photos').remove(filesToDelete);
+            const { data: removed, error: storageError } = await supabaseAdmin
+                .storage
+                .from('surat-photos')
+                .remove(filesToDelete)
+            if (storageError) throw storageError;
+
+            console.log("Removed result:", removed);
         }
 
         // Hapus data lampiran dari database

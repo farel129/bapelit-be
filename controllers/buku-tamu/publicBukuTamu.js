@@ -104,7 +104,6 @@ const submitPublicBukuTamu = async (req, res) => {
     try {
         const { qr_token } = req.params;
         const { nama_lengkap, instansi, jabatan, keperluan, device_id } = req.body;
-        const photos = req.files;
 
         // Validasi input
         if (!nama_lengkap || !device_id) {
@@ -145,95 +144,81 @@ const submitPublicBukuTamu = async (req, res) => {
             });
         }
 
+        const kehadiranData = {
+            buku_tamu_id: event.id,
+            device_id: device_id,
+            nama_lengkap,
+            instansi: instansi || '',
+            jabatan: jabatan || '',
+            keperluan: keperluan || ''
+        }
+
         // Insert data kehadiran tamu dengan device_id
         const { data: kehadiran, error: kehadiranError } = await supabase
             .from('kehadiran_tamu')
-            .insert([{
-                buku_tamu_id: event.id,
-                device_id: device_id, // 👈 PENTING: Simpan device_id
-                nama_lengkap,
-                instansi: instansi || '',
-                jabatan: jabatan || '',
-                keperluan: keperluan || ''
-            }])
-            .select();
+            .insert([kehadiranData])
+            .select()
+            .single();
 
         if (kehadiranError) {
             console.error('Supabase error:', kehadiranError);
             return res.status(500).json({ error: kehadiranError.message });
         }
 
-        const kehadiranId = kehadiran[0].id;
-        const uploadedPhotos = [];
+        let photoKehadiranCount = 0;
+        if (req.files && req.files.length > 0) {
+            const uploadPromises = req.files.map(file =>
+                uploadBuktiTamu(file, 'bukti-tamu', 'buku-tamu')
+            );
 
-        // Process uploaded photos jika ada
-        if (photos && photos.length > 0) {
-            for (const photo of photos) {
-                try {
-                    // Validasi file
-                    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png'];
-                    const maxSize = 5 * 1024 * 1024; // 5MB
+            try {
+                const uploadResults = await Promise.all(uploadPromises);
 
-                    if (!allowedTypes.includes(photo.mimetype)) {
-                        console.error(`Invalid file type: ${photo.mimetype}`);
-                        continue;
-                    }
+                // Simpan data lampiran ke database
+                const fotoData = uploadResults.map(result => ({
+                    kehadiran_tamu_id: kehadiran.id,
+                    file_url: result.publicUrl,
+                    file_name: result.fileName,
+                    original_name: result.originalName,
+                    file_size: result.size,
+                    mime_type: result.mimetype
+                }));
 
-                    if (photo.size > maxSize) {
-                        console.error(`File too large: ${photo.size} bytes`);
-                        continue;
-                    }
+                const { error: fileError } = await supabase
+                    .from('foto_kehadiran_tamu')
+                    .insert(fotoData);
 
-                    // Upload menggunakan fungsi uploadBuktiTamu
-                    const uploadResult = await uploadBuktiTamu(photo, 'bukti-tamu');
+                if (fileError) {
+                    await supabase.from('kehadiran_tamu').delete().eq('id', kehadiran.id);
 
-                    // Simpan info foto ke database
-                    const { data: fotoData, error: fotoError } = await supabase
-                        .from('foto_kehadiran_tamu')
-                        .insert([{
-                            kehadiran_tamu_id: kehadiranId,
-                            file_url: uploadResult.publicUrl,
-                            file_name: uploadResult.fileName,
-                            original_name: uploadResult.originalName,
-                            file_size: uploadResult.size,
-                            mime_type: uploadResult.mimetype
-                        }])
-                        .select();
+                    // Hapus files dari Supabase Storage
+                    const filesToDelete = uploadResults.map(r => r.fileName);
+                    await supabase.storage.from('buku-tamu').remove(filesToDelete);
 
-                    if (fotoError) {
-                        console.error('Error saving photo info:', fotoError);
-                        // Jika gagal simpan ke DB, hapus file dari storage
-                        try {
-                            await supabaseAdmin.storage
-                                .from('buku-tamu')
-                                .remove([uploadResult.fileName]);
-                        } catch (removeError) {
-                            console.error('Error removing uploaded file:', removeError);
-                        }
-                    } else {
-                        uploadedPhotos.push({
-                            ...fotoData[0],
-                            public_url: uploadResult.publicUrl
-                        });
-                    }
-
-                } catch (photoError) {
-                    console.error('Error processing photo:', photoError);
+                    return res.status(400).json({ error: 'Gagal menyimpan foto: ' + fileError.message });
                 }
+
+                photoKehadiranCount = req.files.length;
+            } catch (uploadError) {
+                console.log('Upload error:', uploadError);
+                await supabase.from('kehadiran_tamu').delete().eq('id', kehadiran.id);
+                return res.status(400).json({ error: 'Gagal upload lampiran: ' + uploadError.message });
             }
         }
 
         res.status(201).json({
-            message: 'Kehadiran berhasil dicatat',
-            attendance: kehadiran[0],
-            uploaded_photos: uploadedPhotos,
-            photo_count: uploadedPhotos.length
+            message: 'kehadiran berhasil dibuat',
+            data: {
+                ...kehadiran,
+                photo_count: photoKehadiranCount,
+                has_photo: photoKehadiranCount > 0
+            }
         });
 
     } catch (error) {
         console.error('Server error:', error);
-        res.status(500).json({ error: 'Gagal mencatat kehadiran' });
+        res.status(500).json({ error: error.message });
     }
 }
 
-module.exports = { checkDevice, getPublicBukuTamu, submitPublicBukuTamu}
+module.exports = { checkDevice, getPublicBukuTamu, submitPublicBukuTamu }

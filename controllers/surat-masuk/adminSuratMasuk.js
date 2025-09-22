@@ -1,4 +1,4 @@
-const { supabase } = require("../../config/supabase");
+const { supabase, supabaseAdmin } = require("../../config/supabase");
 const { uploadToSupabaseStorage } = require("../../utils/uploadSupabase");
 
 const buatSuratMasuk = async (req, res) => {
@@ -212,17 +212,52 @@ const getFileSuratMasuk = async (req, res) => {
 }
 
 const deleteSuratMasuk = async (req, res) => {
-    const { id } = req.params;
-    try {
-        const { error } = await supabase
-            .from('surat_masuk')
-            .delete()
-            .eq('id', id);
-        if (error) throw error;
-        res.status(200).json({ message: 'Surat berhasil dihapus' });
-    } catch (error) {
-        res.status(500).json({ message: 'Gagal menghapus surat', detail: error.message });
+  const { id } = req.params;
+  try {
+    // 1. Ambil semua foto terkait surat
+    const { data: photos, error: photoError } = await supabase
+      .from('surat_photos')
+      .select('storage_path')
+      .eq('surat_id', id);
+
+    if (photoError) throw photoError;
+
+    // 2. Hapus file dari storage pakai supabaseAdmin
+    if (photos && photos.length > 0) {
+      const filesToDelete = photos.map(p => p.storage_path);
+      console.log("Deleting files:", filesToDelete);
+
+      const { data: removed, error: storageError } = await supabaseAdmin
+        .storage
+        .from('surat-photos')
+        .remove(filesToDelete);
+
+      if (storageError) throw storageError;
+
+      console.log("Removed result:", removed);
     }
-}
+
+    // 3. Hapus record foto di DB
+    const { error: deletePhotosError } = await supabase
+      .from('surat_photos')
+      .delete()
+      .eq('surat_id', id);
+
+    if (deletePhotosError) throw deletePhotosError;
+
+    // 4. Hapus surat dari DB
+    const { error: suratError } = await supabase
+      .from('surat_masuk')
+      .delete()
+      .eq('id', id);
+
+    if (suratError) throw suratError;
+
+    res.status(200).json({ message: 'Surat dan semua file berhasil dihapus' });
+  } catch (error) {
+    console.error("DeleteSuratMasuk error:", error);
+    res.status(500).json({ message: 'Gagal menghapus surat', detail: error.message });
+  }
+};
 
 module.exports = { buatSuratMasuk, getSuratMasuk, getFileSuratMasuk, deleteSuratMasuk }
