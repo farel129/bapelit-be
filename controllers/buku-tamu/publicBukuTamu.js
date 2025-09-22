@@ -179,6 +179,7 @@ const submitPublicBukuTamu = async (req, res) => {
                     kehadiran_tamu_id: kehadiran.id,
                     file_url: result.publicUrl,
                     file_name: result.fileName,
+                    storage_path: result.fileName,
                     original_name: result.originalName,
                     file_size: result.size,
                     mime_type: result.mimetype
@@ -193,7 +194,7 @@ const submitPublicBukuTamu = async (req, res) => {
 
                     // Hapus files dari Supabase Storage
                     const filesToDelete = uploadResults.map(r => r.fileName);
-                    await supabase.storage.from('buku-tamu').remove(filesToDelete);
+                    await supabaseAdmin.storage.from('buku-tamu').remove(filesToDelete);
 
                     return res.status(400).json({ error: 'Gagal menyimpan foto: ' + fileError.message });
                 }

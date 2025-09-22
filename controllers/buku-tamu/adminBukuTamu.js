@@ -220,23 +220,11 @@ const updateStatusBukuTamu = async (req, res) => {
 
 const deleteBukuTamu = async (req, res) => {
     const { id } = req.params;
-
     try {
-        // 1. Ambil data event untuk response (opsional)
-        const { data: eventToDelete, error: fetchError } = await supabase
-            .from('buku_tamu')
-            .select('*')
-            .eq('id', id)
-            .single();
-
-        if (fetchError) {
-            return res.status(404).json({ error: 'Event tidak ditemukan' });
-        }
-
-        // 2. Ambil semua foto terkait event ini
-        const { data: fotoTamu, error: fotoError } = await supabase
+        // Hapus lampiran terlebih dahulu
+        const { fotoTamu, error: fotoError } = await supabase
             .from('foto_kehadiran_tamu')
-            .select('file_name') // pastikan kolom ini sesuai nama file di storage
+            .select('storage_path')
             .eq('kehadiran_tamu_id', id);
 
         if (fotoError) {
@@ -244,50 +232,30 @@ const deleteBukuTamu = async (req, res) => {
             return res.status(500).json({ error: 'Gagal mengambil data foto' });
         }
 
-        // 3. Jika ada foto, hapus dari Supabase Storage
+        // Jika ada foto, coba hapus dari storage
         if (fotoTamu && fotoTamu.length > 0) {
-            const filesToDelete = fotoTamu.map(item => item.file_name);
-
-            const { error: storageError } = await supabaseAdmin
+            const filesToDelete = fotoTamu.map(item => item.storage_path);
+            const { data: removed, error: storageError } = await supabaseAdmin
                 .storage
                 .from('buku-tamu')
                 .remove(filesToDelete);
+            if (storageError) throw storageError;
 
-            if (storageError) {
-                console.error('Storage delete error:', storageError);
-                return res.status(500).json({ error: 'Gagal menghapus file dari storage' });
-            }
-
-            console.log(`Berhasil menghapus ${filesToDelete.length} file dari storage`);
+            console.log("Removed result:", removed);
         }
 
-        // 4. Hapus semua record foto dari database
-        const { error: deleteFotoError } = await supabase
-            .from('foto_kehadiran_tamu')
-            .delete()
-            .eq('kehadiran_tamu_id', id);
+        // Hapus record foto dari DB
+        await supabase.from('foto_kehadiran_tamu').delete().eq('kehadiran_tamu_id', id);
 
-        if (deleteFotoError) {
-            console.error('DB foto delete error:', deleteFotoError);
-            return res.status(500).json({ error: 'Gagal menghapus data foto dari database' });
-        }
 
-        // 5. Hapus event dari buku_tamu
+        // Hapus event
         const { error: deleteEventError } = await supabase
             .from('buku_tamu')
             .delete()
             .eq('id', id);
 
-        if (deleteEventError) {
-            console.error('DB event delete error:', deleteEventError);
-            return res.status(500).json({ error: 'Gagal menghapus event' });
-        }
+        if (deleteEventError) throw deleteEventError;
 
-        // 6. Response sukses
-        res.status(200).json({
-            message: 'Buku tamu dan semua data terkait berhasil dihapus',
-            deleted_event: eventToDelete
-        });
 
     } catch (error) {
         console.error('Server error:', error);
