@@ -1,4 +1,4 @@
-const { supabase } = require("../../config/supabase");
+const { supabase, supabaseAdmin } = require("../../config/supabase");
 
 const buatDisposisi = async (req, res) => {
     try {
@@ -247,18 +247,18 @@ const getKepalaDetailDisposisi = async (req, res) => {
 }
 
 const deleteDisposisi = async (req, res) => {
-    try {
-        const { id } = req.params;
+    const { id } = req.params;
 
-        // Hanya kepala dan admin yang bisa hapus
-        if (req.user.role !== 'kepala' && req.user.role !== 'admin') {
+    try {
+        // Hanya kepala yang bisa hapus
+        if (req.user.role !== 'kepala') {
             return res.status(403).json({ error: 'Akses ditolak' });
         }
 
-        // STEP 1: Ambil surat_masuk_id dari disposisi yang akan dihapus
+        // 1. Ambil data disposisi untuk validasi
         const { data: disposisi, error: fetchError } = await supabase
             .from('disposisi')
-            .select('surat_masuk_id') // ganti dengan nama kolom yang sesuai di tabel disposisi Anda
+            .select('surat_masuk_id')
             .eq('id', id)
             .single();
 
@@ -266,31 +266,86 @@ const deleteDisposisi = async (req, res) => {
             return res.status(404).json({ error: 'Disposisi tidak ditemukan' });
         }
 
-        // STEP 2: Hapus disposisi
-        const { error } = await supabase
+        // 2. Ambil data file feedback
+        const { data: fileFeedback, error: fileError } = await supabase
+            .from('feedback_files')
+            .select('id, storage_path, file_filename')
+            .eq('disposisi_id', id);
+
+        if (fileError) {
+            return res.status(500).json({
+                error: 'Gagal mengambil data file: ' + fileError.message
+            });
+        }
+
+        // 3. Hapus file dari storage jika ada
+        if (fileFeedback && fileFeedback.length > 0) {
+            const filesToDelete = fileFeedback
+                .map(item => item.storage_path)
+                .filter(path => path && typeof path === 'string' && path.trim().length > 0);
+
+            if (filesToDelete.length > 0) {
+                try {
+                    const { data: removed, error: storageError } = await supabaseAdmin
+                        .storage
+                        .from('surat-photos')
+                        .remove(filesToDelete);
+
+                    if (storageError) {
+                        console.error('Storage delete error:', storageError);
+                        // Log error tapi jangan return, lanjut hapus record database
+                    }
+                } catch (storageException) {
+                    console.error('Storage exception:', storageException);
+                    // Log error tapi jangan return, lanjut hapus record database
+                }
+            }
+
+            // 4. Hapus records feedback_files dari database
+            const { error: deleteFeedbackError } = await supabase
+                .from('feedback_files')
+                .delete()
+                .eq('disposisi_id', id);
+
+            if (deleteFeedbackError) {
+                return res.status(500).json({
+                    error: 'Gagal menghapus file feedback: ' + deleteFeedbackError.message
+                });
+            }
+        }
+
+        // 5. Hapus record disposisi
+        const { error: deleteDisposisiError } = await supabase
             .from('disposisi')
             .delete()
             .eq('id', id);
 
-        if (error) {
-            return res.status(400).json({ error: error.message });
+        if (deleteDisposisiError) {
+            return res.status(500).json({
+                error: 'Gagal menghapus disposisi: ' + deleteDisposisiError.message
+            });
         }
 
-        // STEP 3: Update has_disposisi = false di surat_masuk
+        // 6. Update status surat masuk
         const { error: updateError } = await supabase
             .from('surat_masuk')
             .update({ has_disposisi: false })
-            .eq('id', disposisi.surat_masuk_id); // ← Sekarang pakai ID surat yang benar
+            .eq('id', disposisi.surat_masuk_id);
 
         if (updateError) {
             console.error('Error updating has_disposisi:', updateError);
-            return res.status(500).json({ error: 'Gagal memperbarui status disposisi surat' });
+            // Jangan return error karena disposisi sudah terhapus
+            // Hanya log untuk monitoring
         }
 
-        res.json({ message: 'Disposisi berhasil dihapus dan status surat diperbarui' });
+        res.json({ 
+            message: 'Disposisi berhasil dihapus dan status surat diperbarui',
+            deleted_files: fileFeedback ? fileFeedback.length : 0
+        });
 
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('Unexpected error in deleteDisposisi:', error);
+        res.status(500).json({ error: 'Terjadi kesalahan internal server' });
     }
 }
 

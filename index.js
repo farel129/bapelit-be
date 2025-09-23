@@ -38,7 +38,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-// app.use(requestLogger); // ← TAMBAHKAN INI
+app.use(requestLogger); 
 
 
 // 🔍 Log jika ada upaya akses CORS ilegal
@@ -69,23 +69,23 @@ app.use('/api/v1/disposisi', disposisiRoutes);
 app.use('/api/v1/feedback-disposisi', feedbackRoutes);
 
 
-// app.use((err, req, res, next) => {
-//   console.error('❌ [UNHANDLED ERROR]', err);
+app.use((err, req, res, next) => {
+  console.error('❌ [UNHANDLED ERROR]', err);
 
-//   if (process.env.NODE_ENV === 'production') {
-//     return res.status(500).json({
-//       success: false,
-//       message: 'Terjadi kesalahan internal. Tim kami sedang memperbaikinya.'
-//     });
-//   }
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(500).json({
+      success: false,
+      message: 'Terjadi kesalahan internal. Tim kami sedang memperbaikinya.'
+    });
+  }
 
-//   res.status(500).json({
-//     success: false,
-//     message: 'Internal Server Error',
-//     error: process.env.NODE_ENV === 'development' ? err.message : undefined,
-//     stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-//   });
-// });
+  res.status(500).json({
+    success: false,
+    message: 'Internal Server Error',
+    error: process.env.NODE_ENV === 'development' ? err.message : undefined,
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+  });
+});
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on http://0.0.0.0:${PORT}`);

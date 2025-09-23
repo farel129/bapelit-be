@@ -220,46 +220,144 @@ const updateStatusBukuTamu = async (req, res) => {
 
 const deleteBukuTamu = async (req, res) => {
     const { id } = req.params;
+
+    // Validasi ID
+    if (!id) {
+        return res.status(400).json({ error: 'ID tidak diberikan' });
+    }
+
     try {
-        // Hapus lampiran terlebih dahulu
-        const { fotoTamu, error: fotoError } = await supabase
+        // Ambil data foto terkait melalui JOIN dengan kehadiran_tamu
+        const { data: fotoTamu, error: fotoError } = await supabase
             .from('foto_kehadiran_tamu')
-            .select('storage_path')
-            .eq('kehadiran_tamu_id', id);
+            .select(`
+                id, 
+                storage_path, 
+                file_name, 
+                file_url, 
+                kehadiran_tamu_id,
+                kehadiran_tamu!inner(
+                    id,
+                    buku_tamu_id
+                )
+            `)
+            .eq('kehadiran_tamu.buku_tamu_id', id);
 
         if (fotoError) {
-            console.error('Error fetching photos:', fotoError);
-            return res.status(500).json({ error: 'Gagal mengambil data foto' });
+            return res.status(500).json({ 
+                error: 'Gagal mengambil data foto: ' + fotoError.message
+            });
         }
 
-        // Jika ada foto, coba hapus dari storage
+        // Hapus file dari storage jika ada
         if (fotoTamu && fotoTamu.length > 0) {
-            const filesToDelete = fotoTamu.map(item => item.storage_path);
-            const { data: removed, error: storageError } = await supabaseAdmin
-                .storage
-                .from('buku-tamu')
-                .remove(filesToDelete);
-            if (storageError) throw storageError;
+            // Filter hanya path yang valid
+            const filesToDelete = fotoTamu
+                .map(item => item.storage_path)
+                .filter(path => path && typeof path === 'string' && path.trim().length > 0);
 
-            console.log("Removed result:", removed);
+            if (filesToDelete.length > 0) {
+                try {
+                    // Hapus file dari Supabase Storage
+                    const { data: removed, error: storageError } = await supabaseAdmin
+                        .storage
+                        .from('buku-tamu')
+                        .remove(filesToDelete);
+
+                    if (storageError) {
+                        return res.status(500).json({ 
+                            error: 'Gagal hapus file dari storage: ' + storageError.message
+                        });
+                    }
+
+                    // Cek jika ada file yang gagal dihapus
+                    if (removed && Array.isArray(removed)) {
+                        const failedFiles = removed.filter(file => file.error);
+                        if (failedFiles.length > 0) {
+                            console.warn('Beberapa file gagal dihapus dari storage:', failedFiles);
+                        }
+                    }
+                    
+                } catch (storageException) {
+                    return res.status(500).json({ 
+                        error: 'Exception saat hapus storage: ' + storageException.message
+                    });
+                }
+            }
         }
 
-        // Hapus record foto dari DB
-        await supabase.from('foto_kehadiran_tamu').delete().eq('kehadiran_tamu_id', id);
+        // Hapus record foto dari database (melalui JOIN)
+        const { data: kehadiranIds, error: kehadiranError } = await supabase
+            .from('kehadiran_tamu')
+            .select('id')
+            .eq('buku_tamu_id', id);
 
+        if (kehadiranError) {
+            return res.status(500).json({ 
+                error: 'Gagal ambil data kehadiran: ' + kehadiranError.message
+            });
+        }
 
-        // Hapus event
-        const { error: deleteEventError } = await supabase
+        let deletedFotoData = [];
+        if (kehadiranIds && kehadiranIds.length > 0) {
+            const kehadiranIdList = kehadiranIds.map(k => k.id);
+            
+            const { data: deletedFotoResult, error: deleteFotoError } = await supabase
+                .from('foto_kehadiran_tamu')
+                .delete()
+                .in('kehadiran_tamu_id', kehadiranIdList)
+                .select();
+
+            if (deleteFotoError) {
+                return res.status(500).json({ 
+                    error: 'Gagal hapus data foto dari database: ' + deleteFotoError.message
+                });
+            }
+            deletedFotoData = deletedFotoResult;
+        }
+
+        // Hapus record kehadiran_tamu
+        const { data: deletedKehadiranData, error: deleteKehadiranError } = await supabase
+            .from('kehadiran_tamu')
+            .delete()
+            .eq('buku_tamu_id', id)
+            .select();
+
+        if (deleteKehadiranError) {
+            return res.status(500).json({ 
+                error: 'Gagal hapus data kehadiran_tamu: ' + deleteKehadiranError.message
+            });
+        }
+
+        // Hapus record buku tamu utama
+        const { data: deletedEventData, error: deleteEventError } = await supabase
             .from('buku_tamu')
             .delete()
-            .eq('id', id);
+            .eq('id', id)
+            .select();
 
-        if (deleteEventError) throw deleteEventError;
+        if (deleteEventError) {
+            return res.status(500).json({ 
+                error: 'Gagal hapus data buku tamu: ' + deleteEventError.message
+            });
+        }
 
+        res.status(200).json({ 
+            message: 'Buku tamu dan file terkait berhasil dihapus',
+            summary: {
+                buku_tamu_deleted: deletedEventData?.length || 0,
+                kehadiran_deleted: deletedKehadiranData?.length || 0,
+                photos_found: fotoTamu?.length || 0,
+                photo_records_deleted: deletedFotoData?.length || 0
+            }
+        });
 
     } catch (error) {
         console.error('Server error:', error);
-        res.status(500).json({ error: 'Gagal menghapus buku tamu: ' + error.message });
+        res.status(500).json({ 
+            message: 'Gagal menghapus buku tamu', 
+            detail: error.message
+        });
     }
 };
 

@@ -214,7 +214,79 @@ const getFileSuratMasuk = async (req, res) => {
 const deleteSuratMasuk = async (req, res) => {
   const { id } = req.params;
   try {
-    // 1. Ambil semua foto terkait surat
+    // 1. Ambil semua disposisi terkait surat
+    const { data: disposisiList, error: disposisiError } = await supabase
+      .from('disposisi')
+      .select('id')
+      .eq('surat_masuk_id', id);
+
+    if (disposisiError) throw disposisiError;
+
+    // 2. Hapus feedback files untuk setiap disposisi
+    if (disposisiList && disposisiList.length > 0) {
+      for (const disposisi of disposisiList) {
+        // Ambil feedback files untuk disposisi ini
+        const { data: feedbackFiles, error: feedbackError } = await supabase
+          .from('feedback_files')
+          .select('id, storage_path, file_filename')
+          .eq('disposisi_id', disposisi.id);
+
+        if (feedbackError) {
+          console.error(`Error getting feedback files for disposisi ${disposisi.id}:`, feedbackError);
+          continue; // Lanjut ke disposisi berikutnya
+        }
+
+        // Hapus file feedback dari storage
+        if (feedbackFiles && feedbackFiles.length > 0) {
+          const feedbackFilesToDelete = feedbackFiles
+            .map(item => item.storage_path)
+            .filter(path => path && typeof path === 'string' && path.trim().length > 0);
+
+          if (feedbackFilesToDelete.length > 0) {
+            try {
+              const { data: removedFeedback, error: feedbackStorageError } = await supabaseAdmin
+                .storage
+                .from('surat-photos')
+                .remove(feedbackFilesToDelete);
+
+              if (feedbackStorageError) {
+                console.error(`Storage error for feedback files:`, feedbackStorageError);
+                // Jangan throw, lanjut hapus record database
+              }
+              
+              console.log("Removed feedback files:", removedFeedback);
+            } catch (storageException) {
+              console.error('Feedback storage exception:', storageException);
+              // Jangan throw, lanjut hapus record database
+            }
+          }
+
+          // Hapus record feedback files dari database
+          const { error: deleteFeedbackError } = await supabase
+            .from('feedback_files')
+            .delete()
+            .eq('disposisi_id', disposisi.id);
+
+          if (deleteFeedbackError) {
+            console.error(`Error deleting feedback files for disposisi ${disposisi.id}:`, deleteFeedbackError);
+            // Jangan throw, lanjut ke disposisi berikutnya
+          }
+        }
+      }
+
+      // 3. Hapus semua record disposisi
+      const { error: deleteDisposisiError } = await supabase
+        .from('disposisi')
+        .delete()
+        .eq('surat_masuk_id', id);
+
+      if (deleteDisposisiError) {
+        console.error('Error deleting disposisi records:', deleteDisposisiError);
+        // Jangan throw, lanjut hapus surat photos
+      }
+    }
+
+    // 4. Ambil semua foto terkait surat
     const { data: photos, error: photoError } = await supabase
       .from('surat_photos')
       .select('storage_path')
@@ -222,22 +294,30 @@ const deleteSuratMasuk = async (req, res) => {
 
     if (photoError) throw photoError;
 
-    // 2. Hapus file dari storage pakai supabaseAdmin
+    // 5. Hapus file surat dari storage
     if (photos && photos.length > 0) {
       const filesToDelete = photos.map(p => p.storage_path);
-      console.log("Deleting files:", filesToDelete);
+      console.log("Deleting surat files:", filesToDelete);
 
-      const { data: removed, error: storageError } = await supabaseAdmin
-        .storage
-        .from('surat-photos')
-        .remove(filesToDelete);
+      try {
+        const { data: removed, error: storageError } = await supabaseAdmin
+          .storage
+          .from('surat-photos')
+          .remove(filesToDelete);
 
-      if (storageError) throw storageError;
+        if (storageError) {
+          console.error('Surat photos storage error:', storageError);
+          // Jangan throw, lanjut hapus record database
+        }
 
-      console.log("Removed result:", removed);
+        console.log("Removed surat files:", removed);
+      } catch (storageException) {
+        console.error('Surat photos storage exception:', storageException);
+        // Jangan throw, lanjut hapus record database
+      }
     }
 
-    // 3. Hapus record foto di DB
+    // 6. Hapus record foto surat di DB
     const { error: deletePhotosError } = await supabase
       .from('surat_photos')
       .delete()
@@ -245,7 +325,7 @@ const deleteSuratMasuk = async (req, res) => {
 
     if (deletePhotosError) throw deletePhotosError;
 
-    // 4. Hapus surat dari DB
+    // 7. Hapus surat dari DB (terakhir)
     const { error: suratError } = await supabase
       .from('surat_masuk')
       .delete()
@@ -253,10 +333,17 @@ const deleteSuratMasuk = async (req, res) => {
 
     if (suratError) throw suratError;
 
-    res.status(200).json({ message: 'Surat dan semua file berhasil dihapus' });
+    res.status(200).json({ 
+      message: 'Surat, disposisi, feedback files, dan semua file berhasil dihapus',
+      deleted_disposisi: disposisiList ? disposisiList.length : 0
+    });
+
   } catch (error) {
     console.error("DeleteSuratMasuk error:", error);
-    res.status(500).json({ message: 'Gagal menghapus surat', detail: error.message });
+    res.status(500).json({ 
+      message: 'Gagal menghapus surat', 
+      detail: error.message 
+    });
   }
 };
 
