@@ -3,14 +3,11 @@ const { supabase } = require("../../config/supabase");
 const getLeaderboardDisposisi = async (req, res) => {
     try {
         const { tipe } = req.params;
-        let selectField;
         let fieldName;
 
         if (tipe === 'atasan') {
-            selectField = 'disposisi_kepada_jabatan';
             fieldName = 'jabatan';
         } else if (tipe === 'bawahan') {
-            selectField = 'diteruskan_kepada_nama';
             fieldName = 'name';
         } else {
             return res.status(400).json({
@@ -18,7 +15,7 @@ const getLeaderboardDisposisi = async (req, res) => {
             });
         }
 
-        // Ambil data disposisi
+        // 1. Ambil data disposisi (Masih menggunakan snapshot text, jadi aman)
         const { data: disposisiData, error: disposisiError } = await supabase
             .from('disposisi')
             .select('disposisi_kepada_jabatan, diteruskan_kepada_nama');
@@ -28,24 +25,36 @@ const getLeaderboardDisposisi = async (req, res) => {
             return res.status(400).json({ error: disposisiError.message });
         }
 
-        // Ambil data users untuk mapping bidang
+        // 2. Ambil data users dengan JOIN ke tabel referensi
+        // KITA UBAH QUERY INI AGAR TIDAK ERROR
         const { data: usersData, error: usersError } = await supabase
             .from('users')
-            .select('name, jabatan, bidang');
+            .select(`
+                name,
+                jabatan:jabatan_id(nama),
+                bidang:bidang_id(nama)
+            `);
 
         if (usersError) {
             console.error(`Error fetching users data:`, usersError);
             return res.status(400).json({ error: usersError.message });
         }
 
-        // Buat mapping dari nama/jabatan ke bidang
+        // 3. Buat mapping dari nama/jabatan ke bidang
+        // KITA SESUAIKAN LOGIC MAPPINGNYA DENGAN STRUKTUR BARU
         const usersBidangMap = {};
+        
         usersData.forEach(user => {
+            const namaBidang = user.bidang?.nama || 'Umum';
+            const namaJabatan = user.jabatan?.nama;
+
+            // Mapping Nama Orang -> Bidang
             if (user.name) {
-                usersBidangMap[user.name] = user.bidang;
+                usersBidangMap[user.name] = namaBidang;
             }
-            if (user.jabatan) {
-                usersBidangMap[user.jabatan] = user.bidang;
+            // Mapping Nama Jabatan -> Bidang
+            if (namaJabatan) {
+                usersBidangMap[namaJabatan] = namaBidang;
             }
         });
 
@@ -66,6 +75,7 @@ const getLeaderboardDisposisi = async (req, res) => {
             // Hitung disposisi yang diteruskan oleh setiap kabid
             const diteruskanCounts = disposisiData.reduce((acc, curr) => {
                 const key = curr.disposisi_kepada_jabatan;
+                // Hitung hanya jika diteruskan (ada nama penerus)
                 if (key && curr.diteruskan_kepada_nama !== null) {
                     const bidang = usersBidangMap[key] || 'Tidak diketahui';
                     const compositeKey = `${key}|${bidang}`;
@@ -75,19 +85,23 @@ const getLeaderboardDisposisi = async (req, res) => {
             }, {});
 
             // Kalkulasi: diterima - diteruskan untuk setiap kabid
+            // (Mencari sisa beban kerja yang belum diteruskan/diselesaikan sendiri)
             result = Object.entries(disposisiCounts)
                 .map(([compositeKey, count]) => {
                     const [jabatan, bidang] = compositeKey.split('|');
+                    // Hindari nilai negatif jika data tidak konsisten
+                    const bebanKerja = Math.max(0, count - (diteruskanCounts[compositeKey] || 0));
+                    
                     return {
                         [fieldName]: jabatan,
                         bidang: bidang,
-                        jumlah_disposisi: count - (diteruskanCounts[compositeKey] || 0)
+                        jumlah_disposisi: bebanKerja
                     };
                 })
                 .sort((a, b) => b.jumlah_disposisi - a.jumlah_disposisi);
 
         } else {
-            // Untuk bawahan: hitung diteruskan_kepada_nama
+            // Untuk bawahan: hitung berapa kali namanya muncul di kolom 'diteruskan_kepada_nama'
             const diteruskanCounts = disposisiData.reduce((acc, curr) => {
                 const key = curr.diteruskan_kepada_nama;
                 if (key) {
@@ -112,9 +126,9 @@ const getLeaderboardDisposisi = async (req, res) => {
 
         res.status(200).json(result);
     } catch (error) {
-        console.error('Server error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        console.error('Server error leaderboard:', error);
+        res.status(500).json({ error: 'Internal server error: ' + error.message });
     }
 }
 
-module.exports = getLeaderboardDisposisi
+module.exports = getLeaderboardDisposisi;

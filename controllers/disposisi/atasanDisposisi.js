@@ -1,44 +1,78 @@
 const { supabase } = require("../../config/supabase");
 const { handleBacaDisposisi, handleTerimaDisposisi } = require("../../utils/disposisiHandler");
 
-const getAtasanDisposisi = async (req, res) => {
+// --- HELPER: Ambil Detail User Lengkap (Nama Jabatan & Bidang) ---
+const fetchUserDetails = async (userId) => {
     try {
-        const userJabatan = req.user.jabatan;
+        const { data, error } = await supabase
+            .from('users')
+            .select(`
+                id, 
+                name, 
+                email, 
+                role, 
+                jabatan:jabatan_id(nama), 
+                bidang:bidang_id(nama)
+            `)
+            .eq('id', userId)
+            .single();
 
-        if (!userJabatan) {
-            return res.status(400).json({ error: 'Jabatan user tidak ditemukan' });
+        if (error || !data) {
+            console.error("Error fetching user details:", error);
+            return null;
         }
 
+        return {
+            ...data,
+            jabatan: data.jabatan?.nama, // Flatten: ambil string namanya saja
+            bidang: data.bidang?.nama    // Flatten: ambil string namanya saja
+        };
+    } catch (err) {
+        console.error("Crash in fetchUserDetails:", err);
+        return null;
+    }
+};
+
+const getAtasanDisposisi = async (req, res) => {
+    try {
+        // 1. Ambil Data User Terbaru
+        const userDetail = await fetchUserDetails(req.user.id);
+
+        if (!userDetail || !userDetail.jabatan) {
+            return res.status(400).json({ error: 'Jabatan user tidak ditemukan. Pastikan user memiliki jabatan di database.' });
+        }
+
+        const userJabatan = userDetail.jabatan;
+
+        // 2. Query Disposisi
         const { data: disposisi, error } = await supabase
             .from('disposisi')
             .select(`
-        *,
-        surat_masuk (
-          id,
-          keterangan,
-          status,
-          surat_photos (
-            id,
-            foto_original_name,
-            file_size,
-            foto_path,
-            storage_path
-          )
-        )
-      `)
+                *,
+                surat_masuk (
+                  id,
+                  keterangan,
+                  status,
+                  surat_photos (
+                    id,
+                    foto_original_name,
+                    file_size,
+                    foto_path,
+                    storage_path
+                  )
+                )
+            `)
             .eq('disposisi_kepada_jabatan', userJabatan)
             .order('created_at', { ascending: false });
 
         if (error) {
-            console.error('Error fetching disposisi for kabid:', error);
+            console.error('Error fetching disposisi:', error);
             return res.status(400).json({ error: error.message });
         }
 
-        // Transform data
         const transformedData = disposisi?.map(item => {
             const photos = item.surat_masuk?.surat_photos?.map(photo => {
                 let photoUrl = `/api/kabid/surat-masuk/photo/${photo.id}`;
-
                 if (photo.foto_path && photo.foto_path.startsWith('http')) {
                     photoUrl = photo.foto_path;
                 } else if (photo.storage_path) {
@@ -47,7 +81,6 @@ const getAtasanDisposisi = async (req, res) => {
                         .getPublicUrl(photo.storage_path);
                     photoUrl = publicUrl;
                 }
-
                 return {
                     id: photo.id,
                     filename: photo.foto_original_name,
@@ -58,11 +91,9 @@ const getAtasanDisposisi = async (req, res) => {
 
             return {
                 ...item,
-                // Photos
                 photos,
                 photo_count: photos.length,
                 has_photos: photos.length > 0,
-                // Surat info
                 surat_masuk: {
                     ...item.surat_masuk,
                     photos,
@@ -73,17 +104,13 @@ const getAtasanDisposisi = async (req, res) => {
         }) || [];
 
         res.json({
-            message: 'Berhasil mengambil disposisi kabid',
+            message: 'Berhasil mengambil disposisi',
             data: transformedData,
-            total: transformedData.length,
-            summary: {
-                belum_dibaca: transformedData.filter(d => d.status === 'belum dibaca').length,
-                sudah_dibaca: transformedData.filter(d => d.status === 'sudah dibaca').length
-            }
+            total: transformedData.length
         });
 
     } catch (error) {
-        console.error('Server error:', error);
+        console.error('Server error getAtasanDisposisi:', error);
         res.status(500).json({ error: error.message });
     }
 }
@@ -91,7 +118,10 @@ const getAtasanDisposisi = async (req, res) => {
 const getAtasanDetailDisposisi = async (req, res) => {
     try {
         const { disposisiId } = req.params;
-        const userJabatan = req.user.jabatan;
+        const userDetail = await fetchUserDetails(req.user.id);
+        
+        if (!userDetail) return res.status(404).json({ error: 'User tidak ditemukan' });
+        const userJabatan = userDetail.jabatan;
 
         const { data: disposisi, error: disposisiError } = await supabase
             .from('disposisi')
@@ -117,7 +147,6 @@ const getAtasanDetailDisposisi = async (req, res) => {
             return res.status(404).json({ error: 'Disposisi tidak ditemukan' });
         }
 
-        // ✅ Validasi bahwa disposisi memang ditujukan untuk user ini
         if (disposisi.disposisi_kepada_jabatan !== userJabatan) {
             return res.status(403).json({ error: 'Anda tidak memiliki akses ke disposisi ini' });
         }
@@ -127,45 +156,24 @@ const getAtasanDetailDisposisi = async (req, res) => {
             .select('*')
             .eq('disposisi_id', disposisiId);
 
-        // ✅ Transform photos dari surat_masuk
         const suratPhotos = disposisi.surat_masuk?.surat_photos?.map(photo => {
-            let photoUrl = `/api/atasan/surat-masuk/photo/${photo.id}`;
-
-            if (photo.foto_path && photo.foto_path.startsWith('http')) {
-                photoUrl = photo.foto_path;
-            } else if (photo.storage_path) {
-                const { data: { publicUrl } } = supabase.storage
-                    .from('surat-photos')
-                    .getPublicUrl(photo.storage_path);
-                photoUrl = publicUrl;
-            }
-
-            return {
-                id: photo.id,
-                filename: photo.foto_original_name,
-                size: photo.file_size,
-                url: photoUrl
-            };
+             let photoUrl = `/api/atasan/surat-masuk/photo/${photo.id}`;
+             if (photo.foto_path && photo.foto_path.startsWith('http')) photoUrl = photo.foto_path;
+             else if (photo.storage_path) {
+                 const { data: { publicUrl } } = supabase.storage.from('surat-photos').getPublicUrl(photo.storage_path);
+                 photoUrl = publicUrl;
+             }
+             return { id: photo.id, filename: photo.foto_original_name, size: photo.file_size, url: photoUrl };
         }) || [];
 
         const disposisiPhotos = disposisiFiles?.map(file => {
-            let fileUrl = `/api/v1/disposisi/atasan/${file.id}`;
-
-            if (file.foto_path && file.foto_path.startsWith('http')) {
-                fileUrl = file.foto_path;
-            } else if (file.storage_path) {
-                const { data: { publicUrl } } = supabase.storage
-                    .from('disposisi-photos')
-                    .getPublicUrl(file.storage_path);
-                fileUrl = publicUrl;
-            }
-
-            return {
-                id: file.id,
-                filename: file.foto_original_name,
-                size: file.file_size,
-                url: fileUrl
-            };
+             let fileUrl = `/api/v1/disposisi/atasan/${file.id}`;
+             if (file.foto_path && file.foto_path.startsWith('http')) fileUrl = file.foto_path;
+             else if (file.storage_path) {
+                 const { data: { publicUrl } } = supabase.storage.from('disposisi-photos').getPublicUrl(file.storage_path);
+                 fileUrl = publicUrl;
+             }
+             return { id: file.id, filename: file.foto_original_name, size: file.file_size, url: fileUrl };
         }) || [];
 
         res.status(200).json({
@@ -185,7 +193,7 @@ const getAtasanDetailDisposisi = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Server error:', error);
+        console.error('Server error getDetail:', error);
         res.status(500).json({ error: error.message });
     }
 }
@@ -193,273 +201,129 @@ const getAtasanDetailDisposisi = async (req, res) => {
 const getAtasanFileDisposisi = async (req, res) => {
     try {
         const { photoId } = req.params;
-        console.log('kabid photo request for ID:', photoId);
-
         const { data: photo, error } = await supabase
             .from('surat_photos')
             .select('foto_path, foto_filename, foto_original_name, storage_path')
             .eq('id', photoId)
             .single();
 
-        if (error) {
-            console.error('Database error:', error);
-            return res.status(404).json({ error: 'Foto tidak ditemukan di database: ' + error.message });
-        }
+        if (error || !photo) return res.status(404).json({ error: 'Foto tidak ditemukan' });
 
-        if (!photo) {
-            console.error('Photo not found for ID:', photoId);
-            return res.status(404).json({ error: 'Foto tidak ditemukan' });
-        }
-
-        console.log('Photo data from DB:', photo);
-
-        // Prioritas 1: Jika foto_path sudah berupa URL lengkap, redirect langsung
-        if (photo.foto_path && photo.foto_path.startsWith('http')) {
-            console.log('Redirecting to existing URL:', photo.foto_path);
-            return res.redirect(photo.foto_path);
-        }
-
-        // Prioritas 2: Generate public URL dari storage_path
+        if (photo.foto_path && photo.foto_path.startsWith('http')) return res.redirect(photo.foto_path);
+        
         if (photo.storage_path) {
-            try {
-                const { data: { publicUrl }, error: urlError } = supabase.storage
-                    .from('surat-photos')
-                    .getPublicUrl(photo.storage_path);
-
-                if (urlError) {
-                    console.error('Error generating public URL:', urlError);
-                } else {
-                    console.log('Generated public URL:', publicUrl);
-                    return res.redirect(publicUrl);
-                }
-            } catch (urlGenError) {
-                console.error('Error in URL generation:', urlGenError);
-            }
+             const { data: { publicUrl } } = supabase.storage.from('surat-photos').getPublicUrl(photo.storage_path);
+             return res.redirect(publicUrl);
         }
-
-        // Prioritas 3: Coba gunakan foto_filename sebagai fallback
-        if (photo.foto_filename) {
-            try {
-                const { data: { publicUrl }, error: urlError } = supabase.storage
-                    .from('surat-photos')
-                    .getPublicUrl(photo.foto_filename);
-
-                if (!urlError) {
-                    console.log('Fallback public URL:', publicUrl);
-                    return res.redirect(publicUrl);
-                }
-            } catch (fallbackError) {
-                console.error('Fallback URL generation failed:', fallbackError);
-            }
-        }
-
-        // Jika semua gagal
-        console.error('All methods failed. Photo data:', photo);
-        return res.status(404).json({
-            error: 'File foto tidak dapat diakses',
-            debug: {
-                photoId,
-                foto_path: photo.foto_path,
-                storage_path: photo.storage_path,
-                foto_filename: photo.foto_filename
-            }
-        });
-
+        return res.status(404).json({ error: 'Path foto tidak valid' });
     } catch (error) {
-        console.error('Server error in kabid photo endpoint:', error);
         res.status(500).json({ error: error.message });
     }
 }
 
-/**
- * Controller untuk kabid baca disposisi
- */
+// --- CONTROLLER ACTION (BACA & TERIMA) DENGAN TRY-CATCH ---
+
 const kabidBacaDisposisi = async (req, res) => {
     try {
-        const { id } = req.params;
-        const { jabatan: userJabatan, id: userId } = req.user;
-
-        const result = await handleBacaDisposisi(id, userJabatan, userId, 'kabid');
-
-        if (result.success) {
-            return res.status(200).json({
-                success: true,
-                message: result.message,
-                data: result.data
-            });
-        } else {
-            return res.status(200).json({
-                success: false,
-                message: result.message,
-                data: result.data
-            });
+        const userDetail = await fetchUserDetails(req.user.id);
+        if (!userDetail) return res.status(404).json({ error: 'Data user tidak ditemukan' });
+        
+        const result = await handleBacaDisposisi(req.params.id, userDetail.jabatan, req.user.id, 'kabid');
+        
+        if (!result.success && result.message.includes('tidak ditemukan')) {
+            return res.status(404).json(result);
         }
+        res.json(result);
     } catch (error) {
-        console.error('Controller error - kabidBacaDisposisi:', error);
-
-        if (error.message.includes('tidak ditemukan')) {
-            return res.status(404).json({
-                success: false,
-                error: error.message
-            });
-        }
-
-        return res.status(500).json({
-            success: false,
-            error: 'Terjadi kesalahan server'
-        });
+        console.error("Error kabidBacaDisposisi:", error);
+        res.status(500).json({ error: error.message });
     }
 }
 
-/**
- * Controller untuk kabid terima disposisi
- */
 const kabidTerimaDisposisi = async (req, res) => {
     try {
-        const { id } = req.params;
-        const { jabatan: userJabatan, id: userId } = req.user;
+        const userDetail = await fetchUserDetails(req.user.id);
+        if (!userDetail) return res.status(404).json({ error: 'Data user tidak ditemukan' });
 
-        const result = await handleTerimaDisposisi(id, userJabatan, userId, 'kabid');
-
-        if (result.success) {
-            return res.status(200).json({
-                success: true,
-                message: result.message,
-                data: result.data
-            });
-        } else {
-            return res.status(200).json({
-                success: false,
-                message: result.message,
-                data: result.data
-            });
-        }
+        const result = await handleTerimaDisposisi(req.params.id, userDetail.jabatan, req.user.id, 'kabid');
+        res.json(result);
     } catch (error) {
-        console.error('Controller error - kabidTerimaDisposisi:', error);
-
-        if (error.message.includes('tidak ditemukan')) {
-            return res.status(404).json({
-                success: false,
-                error: error.message
-            });
-        }
-
-        return res.status(500).json({
-            success: false,
-            error: 'Terjadi kesalahan server'
-        });
+        console.error("Error kabidTerimaDisposisi:", error);
+        res.status(500).json({ error: error.message });
     }
 }
 
-/**
- * Controller untuk sekretaris baca disposisi
- */
 const sekretarisBacaDisposisi = async (req, res) => {
     try {
-        const { id } = req.params;
-        const { jabatan: userJabatan, id: userId } = req.user;
+        // Ambil detail user (Join ke tabel jabatan)
+        const userDetail = await fetchUserDetails(req.user.id);
+        if (!userDetail) return res.status(404).json({ error: 'Data user tidak ditemukan' });
 
-        const result = await handleBacaDisposisi(id, userJabatan, userId, 'sekretaris');
-
-        if (result.success) {
-            return res.status(200).json({
-                success: true,
-                message: result.message,
-                data: result.data
-            });
-        } else {
-            return res.status(200).json({
-                success: false,
-                message: result.message,
-                data: result.data
-            });
+        // Panggil handler
+        const result = await handleBacaDisposisi(req.params.id, userDetail.jabatan, req.user.id, 'sekretaris');
+        
+        // Cek hasil
+        if (!result.success && result.message.includes('tidak ditemukan')) {
+            return res.status(404).json(result);
         }
+        res.json(result);
     } catch (error) {
-        console.error('Controller error - sekretarisBacaDisposisi:', error);
-
-        if (error.message.includes('tidak ditemukan')) {
-            return res.status(404).json({
-                success: false,
-                error: error.message
-            });
-        }
-
-        return res.status(500).json({
-            success: false,
-            error: 'Terjadi kesalahan server'
-        });
+        console.error("Error sekretarisBacaDisposisi:", error);
+        res.status(500).json({ error: error.message });
     }
 }
 
-/**
- * Controller untuk sekretaris terima disposisi
- */
 const sekretarisTerimaDisposisi = async (req, res) => {
     try {
-        const { id } = req.params;
-        const { jabatan: userJabatan, id: userId } = req.user;
+        const userDetail = await fetchUserDetails(req.user.id);
+        if (!userDetail) return res.status(404).json({ error: 'Data user tidak ditemukan' });
 
-        const result = await handleTerimaDisposisi(id, userJabatan, userId, 'sekretaris');
-
-        if (result.success) {
-            return res.status(200).json({
-                success: true,
-                message: result.message,
-                data: result.data
-            });
-        } else {
-            return res.status(200).json({
-                success: false,
-                message: result.message,
-                data: result.data
-            });
-        }
+        const result = await handleTerimaDisposisi(req.params.id, userDetail.jabatan, req.user.id, 'sekretaris');
+        res.json(result);
     } catch (error) {
-        console.error('Controller error - sekretarisTerimaDisposisi:', error);
-
-        if (error.message.includes('tidak ditemukan')) {
-            return res.status(404).json({
-                success: false,
-                error: error.message
-            });
-        }
-
-        return res.status(500).json({
-            success: false,
-            error: 'Terjadi kesalahan server'
-        });
+        console.error("Error sekretarisTerimaDisposisi:", error);
+        res.status(500).json({ error: error.message });
     }
 }
 
 const listBawahan = async (req, res) => {
     try {
-        // Ambil user di bidang yang sama, kecuali diri sendiri
-        const { data: bawahan, error } = await supabase
-            .from('users')
-            .select('id, name, jabatan, bidang')
-            .eq('bidang', req.user.bidang)
-            .neq('id', req.user.id) // Kecuali diri sendiri
-            .in('role', ['staff']); // Hanya staff
+        const currentUser = await fetchUserDetails(req.user.id);
+        if (!currentUser) return res.status(404).json({error: "User tidak ditemukan"});
 
-        if (error) {
-            return res.status(500).json({ error: error.message });
-        }
+        const { data: userRaw } = await supabase.from('users').select('bidang_id').eq('id', req.user.id).single();
+        
+        const { data: bawahanList, error: bawahanError } = await supabase
+             .from('users')
+             .select(`
+                id, 
+                name, 
+                jabatan:jabatan_id(nama), 
+                bidang:bidang_id(nama)
+            `)
+            .eq('bidang_id', userRaw.bidang_id)
+            .neq('id', req.user.id)
+            .in('role', ['staff']);
 
-        res.json({
-            message: 'Daftar bawahan',
-            data: bawahan
-        });
+        if (bawahanError) return res.status(500).json({ error: bawahanError.message });
 
+        const formattedBawahan = bawahanList.map(u => ({
+            id: u.id,
+            name: u.name,
+            jabatan: u.jabatan?.nama || '-',
+            bidang: u.bidang?.nama || '-'
+        }));
+
+        res.json({ message: 'Daftar bawahan', data: formattedBawahan });
     } catch (error) {
-        console.error('Server error:', error);
+        console.error('Server error listBawahan:', error);
         res.status(500).json({ error: error.message });
     }
 }
 
 const atasanTeruskanDisposisi = async (req, res) => {
     try {
-        const { role } = req.params;
-        const { disposisiId } = req.params;
+        const { role, disposisiId } = req.params;
         const {
             diteruskan_kepada_user_id,
             diteruskan_kepada_jabatan,
@@ -467,102 +331,58 @@ const atasanTeruskanDisposisi = async (req, res) => {
             tipe_penerusan
         } = req.body;
 
-        if (!['user', 'sekretaris'].includes(role)) {
-            return res.status(400).json({ error: 'Role tidak valid' });
-        }
-
+        const sender = await fetchUserDetails(req.user.id);
         const statusField = role === 'user' ? 'status_dari_kabid' : 'status_dari_sekretaris';
 
-        // ✅ Role check
-        if (req.user.role !== 'user' && req.user.role !== 'sekretaris') {
-            return res.status(403).json({ error: 'Hanya Sekretaris dan Kabid yang bisa meneruskan disposisi' });
-        }
-
-        // Ambil disposisi yang akan diteruskan
         const { data: disposisiAwal, error: disposisiError } = await supabase
             .from('disposisi')
             .select('*')
             .eq('id', disposisiId)
             .single();
 
-        if (disposisiError || !disposisiAwal) {
-            return res.status(404).json({ error: 'Disposisi tidak ditemukan' });
-        }
+        if (disposisiError || !disposisiAwal) return res.status(404).json({ error: 'Disposisi tidak ditemukan' });
 
-        // ✅ Hanya bisa meneruskan disposisi yang ditujukan kepada dirinya
-        if (disposisiAwal.disposisi_kepada_jabatan !== req.user.jabatan) {
+        if (disposisiAwal.disposisi_kepada_jabatan !== sender.jabatan) {
             return res.status(403).json({ error: 'Disposisi ini bukan untuk Anda' });
         }
 
+        let updateData = {};
         let logKeterangan = '';
         let logKeUserId = null;
-        let updateData;
-        if (req.user.role === 'sekretaris') {
 
-            if (tipe_penerusan === 'jabatan') {
-                if (!diteruskan_kepada_jabatan) {
-                    return res.status(400).json({ error: 'Jabatan penerima wajib dipilih' });
-                }
-                updateData = {
-                    disposisi_kepada_jabatan: diteruskan_kepada_jabatan,
-                    status: 'belum dibaca',
-                    status_dari_bawahan: 'belum dibaca'
-                };
-                logKeterangan = `Disposisi diteruskan dari ${req.user.jabatan} ke jabatan ${diteruskan_kepada_jabatan}`;
-            }
-            else {
-                const { data: penerima, error: penerimaError } = await supabase
-                    .from('users')
-                    .select('id, name, bidang, jabatan')
-                    .eq('id', diteruskan_kepada_user_id)
-                    .single();
-
-                if (penerimaError || !penerima) {
-                    return res.status(404).json({ error: 'User penerima tidak ditemukan' });
-                }
-
-                if (req.user.role !== 'sekretaris' && penerima.bidang !== req.user.bidang) {
-                    return res.status(403).json({ error: 'Hanya bisa meneruskan ke user di bidang yang sama' });
-                }
-
-                updateData = {
-                    diteruskan_kepada_user_id: penerima.id,
-                    diteruskan_kepada_jabatan: penerima.jabatan,
-                    diteruskan_kepada_nama: penerima.name,
-                    catatan_atasan,
-                    [statusField]: 'diteruskan',
-                    status_dari_bawahan: 'belum dibaca',
-                    updated_at: new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString()
-                };
-                logKeterangan = `Disposisi diteruskan dari ${req.user.jabatan} ke ${penerima.name}`;
-                logKeUserId = penerima.id;
-            }
+        if (req.user.role === 'sekretaris' && tipe_penerusan === 'jabatan') {
+            updateData = {
+                disposisi_kepada_jabatan: diteruskan_kepada_jabatan,
+                status: 'belum dibaca',
+                status_dari_bawahan: 'belum dibaca'
+            };
+            logKeterangan = `Disposisi diteruskan dari ${sender.jabatan} ke jabatan ${diteruskan_kepada_jabatan}`;
         } else {
             const { data: penerima, error: penerimaError } = await supabase
                 .from('users')
-                .select('id, name, bidang, jabatan')
+                .select(`id, name, jabatan:jabatan_id(nama), bidang:bidang_id(nama)`)
                 .eq('id', diteruskan_kepada_user_id)
                 .single();
 
-            if (penerimaError || !penerima) {
-                return res.status(404).json({ error: 'User penerima tidak ditemukan' });
-            }
+            if (penerimaError || !penerima) return res.status(404).json({ error: 'User penerima tidak ditemukan' });
 
-            if (penerima.bidang !== req.user.bidang) {
-                return res.status(403).json({ error: 'Hanya bisa meneruskan ke user di bidang yang sama' });
+            const penerimaFlat = { ...penerima, jabatan: penerima.jabatan?.nama, bidang: penerima.bidang?.nama };
+
+            if (req.user.role !== 'sekretaris' && penerimaFlat.bidang !== sender.bidang) {
+                 return res.status(403).json({ error: 'Hanya bisa meneruskan ke user di bidang yang sama' });
             }
 
             updateData = {
-                diteruskan_kepada_user_id: penerima.id,
-                diteruskan_kepada_jabatan: penerima.jabatan,
-                diteruskan_kepada_nama: penerima.name,
+                diteruskan_kepada_user_id: penerimaFlat.id,
+                diteruskan_kepada_jabatan: penerimaFlat.jabatan,
+                diteruskan_kepada_nama: penerimaFlat.name,
                 catatan_atasan,
                 [statusField]: 'diteruskan',
                 status_dari_bawahan: 'belum dibaca',
-                updated_at: new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString()
+                updated_at: new Date().toISOString()
             };
-            logKeterangan = `Disposisi diteruskan dari ${req.user.jabatan} ke ${penerima.name}`;
-            logKeUserId = penerima.id;
+            logKeterangan = `Disposisi diteruskan dari ${sender.jabatan} ke ${penerimaFlat.name}`;
+            logKeUserId = penerimaFlat.id;
         }
 
         const { data: updatedDisposisi, error: updateError } = await supabase
@@ -572,48 +392,33 @@ const atasanTeruskanDisposisi = async (req, res) => {
             .select()
             .single();
 
-        if (updateError) {
-            console.error('Error updating disposisi:', updateError);
-            return res.status(400).json({ error: updateError.message });
-        }
+        if (updateError) return res.status(400).json({ error: updateError.message });
 
-        // 🔥 Tambahkan log status
-        await supabase
-            .from('disposisi_status_log')
-            .insert({
-                disposisi_id: disposisiId,
-                status: 'diteruskan',
-                oleh_user_id: req.user.id,
-                ke_user_id: logKeUserId,
-                keterangan: logKeterangan
-            });
-
-        res.status(200).json({
-            message: 'Disposisi berhasil diteruskan',
-            data: {
-                ...updatedDisposisi,
-                disposisi_sebelumnya: disposisiAwal
-            }
+        await supabase.from('disposisi_status_log').insert({
+            disposisi_id: disposisiId,
+            status: 'diteruskan',
+            oleh_user_id: req.user.id,
+            ke_user_id: logKeUserId,
+            keterangan: logKeterangan
         });
 
+        res.status(200).json({ message: 'Disposisi berhasil diteruskan', data: updatedDisposisi });
+
     } catch (error) {
-        console.error('Server error:', error);
+        console.error('Server error teruskan:', error);
         res.status(500).json({ error: error.message });
     }
 }
 
 const listJabatan = async (req, res) => {
     try {
-        // ✅ Ambil dari master data jabatan atau dari database
-        const jabatanList = [
-            'Kabid Perekonomian, Infrastruktur, dan Kewilayahan',
-            'Kabid Pendanaan, Pengendalian, dan Evaluasi',
-            'Kabid Pemerintahan dan Pengembangan Manusia',
-            'Kabid Penelitian dan Pengembangan',
-            'Kasubag Keuangan',
-            'Kasubag Umum dan Kepegawaian',
-        ];
+        const { data, error } = await supabase
+            .from('jabatan')
+            .select('nama')
+            .order('nama', { ascending: true });
 
+        if (error) throw error;
+        const jabatanList = data.map(j => j.nama);
         res.json(jabatanList);
     } catch (error) {
         console.error('Error fetching jabatan:', error);
